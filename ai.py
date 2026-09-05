@@ -5,6 +5,8 @@ from pathlib import Path
 
 import requests
 
+from memory_system import MemorySystem
+
 
 # ============================================================
 # OBSIDIAN AI — CONTROLLED CODING AGENT
@@ -19,6 +21,8 @@ BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = BASE_DIR / "workspace"
 
 WORKSPACE.mkdir(exist_ok=True)
+
+memory = MemorySystem(WORKSPACE)
 
 
 # ============================================================
@@ -65,6 +69,12 @@ You have tools for:
 - writing files
 - creating directories
 - running commands
+- remembering facts permanently (persists after this session ends)
+- recalling previously remembered facts
+
+Use "remember" whenever the user states a durable preference, project
+decision, or fact worth keeping across sessions. Use "recall_memory"
+when a past fact would help you answer the current request.
 
 ENVIRONMENT:
 - Windows
@@ -312,6 +322,46 @@ TOOLS = [
                 "required": ["command"]
             }
         }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": "Permanently store an important fact so it is still known in future sessions, after this terminal is closed and reopened. Use for user preferences, project decisions, or anything worth not forgetting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The fact to remember, written clearly and completely."
+                    },
+                    "importance": {
+                        "type": "integer",
+                        "description": "How important this is to recall later, 1 (minor) to 5 (critical). Default 3."
+                    }
+                },
+                "required": ["content"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": "Search previously remembered facts by keyword.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keyword or phrase to search stored memories for."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
     }
 ]
 
@@ -341,6 +391,16 @@ def execute_tool(name, arguments):
 
         if name == "run_command":
             return run_command(arguments["command"])
+
+        if name == "remember":
+            mem_id = memory.remember(
+                arguments["content"],
+                importance=arguments.get("importance", 3)
+            )
+            return f"Remembered (id={mem_id}): {arguments['content']}"
+
+        if name == "recall_memory":
+            return memory.recall(arguments["query"])
 
         return f"Unknown tool: {name}"
 
@@ -411,6 +471,17 @@ messages = [
         "content": SYSTEM_PROMPT
     }
 ]
+
+_startup_memories = memory.startup_context()
+
+if _startup_memories:
+    messages.append({
+        "role": "system",
+        "content": (
+            "MEMORY CONTEXT — facts remembered from previous sessions:\n"
+            f"{_startup_memories}"
+        )
+    })
 
 
 while True:
