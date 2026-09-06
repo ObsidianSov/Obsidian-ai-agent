@@ -7,6 +7,7 @@ import requests
 
 from memory_system import MemorySystem
 from audit_log import AuditLog
+from web_tools import fetch_url
 
 
 # ============================================================
@@ -372,6 +373,24 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "fetch_url",
+            "description": "Fetch a real, live web page or API endpoint and read its text content. Use this to verify facts, check real API documentation, or read a page the user gives you — instead of guessing from memory. Cannot search the web or discover URLs, only read a URL it's given. Refuses internal/private network addresses.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Full URL to fetch, including https:// or http://"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
             "name": "remember",
             "description": "Permanently store an important fact so it is still known in future sessions, after this terminal is closed and reopened. Use for user preferences, project decisions, or anything worth not forgetting.",
             "parameters": {
@@ -442,6 +461,11 @@ def execute_tool(name, arguments):
             tier, _ = classify_command(arguments["command"], workspace_path=str(WORKSPACE))
             output = gated_run_command(arguments["command"])
             if output.startswith("BLOCKED:") or output.startswith("DENIED:"):
+                success = False
+
+        elif name == "fetch_url":
+            output = fetch_url(arguments["url"])
+            if output.startswith("BLOCKED:") or output.startswith("Error"):
                 success = False
 
         elif name == "remember":
