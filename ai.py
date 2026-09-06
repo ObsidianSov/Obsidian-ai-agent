@@ -245,7 +245,7 @@ def gated_run_command(command: str) -> str:
     still does the actual execution once cleared.
     """
 
-    tier, reason = classify_command(command)
+    tier, reason = classify_command(command, workspace_path=str(WORKSPACE))
 
     if tier == "BLOCK":
         print(f"\n[ACTION GATE] BLOCKED — {reason}")
@@ -439,7 +439,7 @@ def execute_tool(name, arguments):
             output = create_directory(arguments["path"])
 
         elif name == "run_command":
-            tier, _ = classify_command(arguments["command"])
+            tier, _ = classify_command(arguments["command"], workspace_path=str(WORKSPACE))
             output = gated_run_command(arguments["command"])
             if output.startswith("BLOCKED:") or output.startswith("DENIED:"):
                 success = False
