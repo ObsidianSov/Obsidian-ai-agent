@@ -6,6 +6,7 @@ from pathlib import Path
 import requests
 
 from memory_system import MemorySystem
+from audit_log import AuditLog
 
 
 # ============================================================
@@ -23,6 +24,7 @@ WORKSPACE = BASE_DIR / "workspace"
 WORKSPACE.mkdir(exist_ok=True)
 
 memory = MemorySystem(WORKSPACE)
+audit = AuditLog(WORKSPACE / "logs")
 
 
 # ============================================================
@@ -415,40 +417,60 @@ TOOLS = [
 
 def execute_tool(name, arguments):
 
+    tier = None
+    success = True
+    output = ""
+
     try:
 
         if name == "list_files":
-            return list_files(arguments["path"])
+            output = list_files(arguments["path"])
 
-        if name == "read_file":
-            return read_file(arguments["path"])
+        elif name == "read_file":
+            output = read_file(arguments["path"])
 
-        if name == "write_file":
-            return write_file(
+        elif name == "write_file":
+            output = write_file(
                 arguments["path"],
                 arguments["content"]
             )
 
-        if name == "create_directory":
-            return create_directory(arguments["path"])
+        elif name == "create_directory":
+            output = create_directory(arguments["path"])
 
-        if name == "run_command":
-            return gated_run_command(arguments["command"])
+        elif name == "run_command":
+            tier, _ = classify_command(arguments["command"])
+            output = gated_run_command(arguments["command"])
+            if output.startswith("BLOCKED:") or output.startswith("DENIED:"):
+                success = False
 
-        if name == "remember":
+        elif name == "remember":
             mem_id = memory.remember(
                 arguments["content"],
                 importance=arguments.get("importance", 3)
             )
-            return f"Remembered (id={mem_id}): {arguments['content']}"
+            output = f"Remembered (id={mem_id}): {arguments['content']}"
 
-        if name == "recall_memory":
-            return memory.recall(arguments["query"])
+        elif name == "recall_memory":
+            output = memory.recall(arguments["query"])
 
-        return f"Unknown tool: {name}"
+        else:
+            output = f"Unknown tool: {name}"
+            success = False
 
     except Exception as e:
-        return f"Tool error: {e}"
+        output = f"Tool error: {e}"
+        success = False
+
+    audit.record(
+        tool_name=name,
+        arguments=arguments,
+        success=success,
+        output=output,
+        tier=tier
+    )
+
+    return output
 
 
 # ============================================================
