@@ -225,6 +225,49 @@ def run_command(command):
 
 
 # ============================================================
+# ACTION GATE — BLOCK / APPROVAL / ALLOW
+# ============================================================
+#
+# Classification logic lives in action_gate.py (pure functions,
+# safely importable for testing). This wrapper adds the actual
+# execution + terminal approval prompt, which needs run_command
+# and input() and so can't live in the side-effect-free module.
+
+from action_gate import classify_command
+
+
+def gated_run_command(command: str) -> str:
+    """
+    Action-gated wrapper around run_command. This is what the
+    tool executor calls — run_command() itself is unchanged and
+    still does the actual execution once cleared.
+    """
+
+    tier, reason = classify_command(command)
+
+    if tier == "BLOCK":
+        print(f"\n[ACTION GATE] BLOCKED — {reason}")
+        return (
+            f"BLOCKED: This command was not executed because it matched "
+            f"a hard-blocked destructive pattern ({reason}). "
+            f"No override is possible for BLOCK-tier commands."
+        )
+
+    if tier == "APPROVAL":
+        print(f"\n[ACTION GATE] APPROVAL REQUIRED — {reason}")
+        print(f"Command: {command}")
+        answer = input("Allow this command to run? (yes/no): ").strip().lower()
+
+        if answer not in ("yes", "y"):
+            print("[ACTION GATE] Denied by user.")
+            return "DENIED: User did not approve this command. It was not executed."
+
+        print("[ACTION GATE] Approved by user.")
+
+    return run_command(command)
+
+
+# ============================================================
 # TOOL DEFINITIONS FOR THE MODEL
 # ============================================================
 
@@ -390,7 +433,7 @@ def execute_tool(name, arguments):
             return create_directory(arguments["path"])
 
         if name == "run_command":
-            return run_command(arguments["command"])
+            return gated_run_command(arguments["command"])
 
         if name == "remember":
             mem_id = memory.remember(
