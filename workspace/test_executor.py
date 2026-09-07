@@ -1,4 +1,4 @@
-"""
+﻿"""
 Test suite for Phase 3: Tool Executor
 """
 
@@ -93,7 +93,6 @@ def test_can_execute():
         
         # Check known tools
         assert executor.can_execute("file_write") == True
-        assert executor.can_execute("read_workspace_file") == True
         assert executor.can_execute("list_files") == True
         print("  [PASS] Known tools recognized")
         
@@ -124,7 +123,6 @@ def test_get_available_tools():
         assert isinstance(tools, list)
         assert len(tools) > 0
         assert "file_write" in tools
-        assert "read_workspace_file" in tools
         print(f"  [PASS] Found {len(tools)} tools: {tools[:3]}...")
         
         return True

@@ -1,0 +1,111 @@
+# Osogbo RainCast AI - Training Configuration
+# ==========================================
+# 
+# This configuration file defines all parameters for training
+# the RainCastConvLSTM model.
+#
+# Author: Ahmad Suleiman
+# Institution: Umaru Musa Yar'adua University (UMYU), Katsina, Nigeria
+
+# Data Configuration
+data:
+  root_dir: "data/processed"
+  train_years: [2005, 2018]
+  val_years: [2019, 2020]
+  test_years: [2021, 2024]
+  
+# Model Configuration
+model:
+  C_in: 8                      # Number of input channels (ERA5 variables)
+  C_hidden: 64                 # Number of hidden channels
+  T_in: 12                     # Input sequence length (hours)
+  T_out: 6                     # Forecast horizon (hours)
+  H: 81                        # Grid height
+  W: 81                        # Grid width
+
+# Input Variables (ERA5)
+input_variables:
+  - tp    # Total precipitation
+  - 2t    # 2m temperature
+  - 2d    # 2m dewpoint
+  - u10   # 10m u-wind
+  - v10   # 10m v-wind
+  - sp    # Surface pressure
+  - tcwv  # Total column water vapor
+  - cape  # Convective available potential energy
+
+# Target Variable
+target_variable: "precipitation"  # GPM IMERG or CHIRPS rainfall
+
+# Loss Configuration
+loss:
+  name: "combined"              # Options: mse, combined, logcosh, heavy_rain
+  mse_weight: 1.0
+  mae_weight: 0.1
+  threshold_light: 1.0           # mm/h
+  threshold_heavy: 5.0            # mm/h
+
+# Training Configuration
+training:
+  batch_size: 4
+  num_epochs: 50
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  optimizer: "adam"              # Options: adam, adamw, sgd
+  scheduler: "cosine"            # Options: none, step, cosine, plateau
+  step_size: 20                 # For step scheduler
+  gamma: 0.5                     # Learning rate decay factor
+  warmup_epochs: 5               # Warmup period
+  
+  # Gradient Clipping
+  clip_grad_norm: 1.0
+  
+  # Early Stopping
+  early_stopping_patience: 10
+  min_delta: 0.001
+  
+  # Mixed Precision Training
+  use_amp: true                 # Automatic mixed precision
+  
+  # Device
+  device: "cuda"                # Options: cuda, cpu, mps
+  
+  # Logging
+  log_interval: 10              # Steps between log outputs
+  eval_interval: 100            # Steps between evaluations
+  save_interval: 5              # Epochs between checkpoint saves
+  
+  # Directories
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  cache_dir: ".cache"
+
+# Validation Configuration
+validation:
+  batch_size: 4
+  compute_metrics: true
+  save_predictions: false
+
+# Testing Configuration
+testing:
+  batch_size: 4
+  save_predictions: true
+  output_dir: "outputs/test"
+
+# Metrics Configuration
+metrics:
+  compute_threshold: true
+  thresholds: [1.0, 5.0, 10.0]  # mm/h for POD/FAR/CSI
+  compare_persistence: true
+  compare_climatology: true
+
+# Reproducibility
+seed: 42
+deterministic: false            # Set true for fully reproducible results (slower)
+
+# Distributed Training (for multi-GPU)
+distributed:
+  enabled: false
+  backend: "nccl"
+  world_size: 1
+  rank: 0

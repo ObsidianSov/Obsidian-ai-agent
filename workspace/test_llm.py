@@ -5,7 +5,6 @@ Test suite for Phase 1: LLM Provider
 import sys
 import os
 
-# Add agent_core to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'agent_core'))
 
 from agent_core.llm import (
@@ -13,7 +12,9 @@ from agent_core.llm import (
     LLMResponse,
     ConfigurationError,
     RateLimitError,
-    JSONParser
+    JSONParser,
+    ToolDefinition,
+    ToolCall
 )
 
 
@@ -33,7 +34,6 @@ def test_provider_initialization():
         if old_key:
             os.environ['OPENROUTER_API_KEY'] = old_key
     
-    # Test with API key (from env or parameter)
     api_key = os.environ.get('OPENROUTER_API_KEY')
     if api_key:
         try:
@@ -52,7 +52,6 @@ def test_json_parser():
     
     parser = JSONParser()
     
-    # Test 1: JSON in code block
     text1 = '''
     Here is my response:
     ```json
@@ -63,13 +62,11 @@ def test_json_parser():
     assert result1 == {"action": "tool_name", "action_input": {"param": "value"}}
     print("  [PASS] Parsed JSON from code block")
     
-    # Test 2: Plain JSON
     text2 = '{"action": "final", "content": "Done!"}'
     result2 = parser.extract_json(text2)
     assert result2 == {"action": "final", "content": "Done!"}
     print("  [PASS] Parsed plain JSON")
     
-    # Test 3: JSON with surrounding text
     text3 = 'Let me think... {"action": "read", "input": {"path": "test.txt"}} is what I need.'
     result3 = parser.extract_json(text3)
     assert result3 == {"action": "read", "input": {"path": "test.txt"}}
@@ -98,21 +95,16 @@ def test_llm_response_structure():
 
 
 def test_api_call():
-    """Test actual API call (requires API key)"""
+    """Test actual API call"""
     print("Testing API call...")
     
     api_key = os.environ.get('OPENROUTER_API_KEY')
     if not api_key:
-        print("  [SKIP] Skipping API test (no API key)")
+        print("  [SKIP] No API key")
         return True
     
     try:
-        provider = OpenRouterProvider(
-            api_key=api_key,
-            model="anthropic/claude-3-haiku",
-            temperature=0.7,
-            max_tokens=50
-        )
+        provider = OpenRouterProvider(api_key=api_key, max_tokens=50)
         
         response = provider.complete(
             "Say exactly: 'Phase 1 works!'",
@@ -120,7 +112,7 @@ def test_api_call():
         )
         
         assert response.content
-        print("  [PASS] API call successful")
+        print(f"  [PASS] API call successful")
         print(f"    Model: {response.model}")
         print(f"    Response: {response.content[:100]}")
         
@@ -131,34 +123,82 @@ def test_api_call():
         return False
 
 
-def test_message_format():
-    """Test message format for multi-turn conversations"""
-    print("Testing message format...")
+def test_tool_definitions():
+    """Test ToolDefinition and ToolCall"""
+    print("Testing tool definitions...")
+    
+    # ToolDefinition
+    tool = ToolDefinition(
+        name="file_write",
+        description="Write to a file",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"}
+            },
+            "required": ["path", "content"]
+        }
+    )
+    
+    assert tool.name == "file_write"
+    print("  [PASS] ToolDefinition works")
+    
+    # ToolCall
+    tc = ToolCall(
+        id="call_123",
+        name="file_write",
+        arguments={"path": "test.txt", "content": "hello"}
+    )
+    
+    assert tc.name == "file_write"
+    assert tc.arguments["path"] == "test.txt"
+    print("  [PASS] ToolCall works")
+    
+    return True
+
+
+def test_provider_with_tools():
+    """Test provider with tool calling"""
+    print("Testing provider with tools...")
     
     api_key = os.environ.get('OPENROUTER_API_KEY')
     if not api_key:
-        print("  [SKIP] Skipping (no API key)")
+        print("  [SKIP] No API key")
         return True
     
     try:
         provider = OpenRouterProvider(api_key=api_key)
         
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "My name is Ahmad."},
-            {"role": "assistant", "content": "Nice to meet you, Ahmad!"},
-            {"role": "user", "content": "What is my name?"}
+        tools = [
+            ToolDefinition(
+                name="list_files",
+                description="List files in directory",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Directory path"}
+                    }
+                }
+            )
         ]
         
-        response = provider.complete_messages(messages)
-        assert "Ahmad" in response.content or "name" in response.content.lower()
-        print("  [PASS] Message history format works")
-        print(f"    Response: {response.content[:100]}")
+        response = provider.complete_with_tools(
+            "List the files here",
+            tools=tools,
+            system_prompt="Use tools when needed.",
+            reset=True
+        )
+        
+        print(f"  [PASS] Tool call response received")
+        print(f"    Finish reason: {response.finish_reason}")
+        if response.tool_calls:
+            print(f"    Tool: {response.tool_calls[0].name}")
         
         return True
         
     except Exception as e:
-        print(f"  [FAIL] Message test failed: {e}")
+        print(f"  [FAIL] Tool test failed: {e}")
         return False
 
 
@@ -174,7 +214,8 @@ def run_all_tests():
         test_json_parser,
         test_llm_response_structure,
         test_api_call,
-        test_message_format,
+        test_tool_definitions,
+        test_provider_with_tools,
     ]
     
     results = []
@@ -187,7 +228,6 @@ def run_all_tests():
             results.append(False)
         print()
     
-    # Summary
     print("=" * 60)
     passed = sum(results)
     total = len(results)
@@ -196,7 +236,7 @@ def run_all_tests():
     if passed == total:
         print("[SUCCESS] PHASE 1 COMPLETE - LLM Provider ready!")
     else:
-        print("[FAILURE] Some tests failed - review above")
+        print("[FAILURE] Some tests failed")
     
     return passed == total
 
