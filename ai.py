@@ -7,7 +7,7 @@ import requests
 
 from memory_system import MemorySystem
 from audit_log import AuditLog
-from web_tools import fetch_url
+from web_tools import fetch_url, web_search
 
 
 # ============================================================
@@ -391,6 +391,24 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "web_search",
+            "description": "Search the web to find and discover relevant URLs, then use fetch_url to read the most promising one. IMPORTANT LIMITATION: this only searches a small, curated set of reference sites (Wikipedia, GitHub, Stack Overflow, MDN, Python/NASA/Open-Meteo docs, etc.) configured in advance — it is NOT unrestricted whole-web search. If nothing relevant turns up, say so plainly rather than guessing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query, kept short and specific"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
             "name": "remember",
             "description": "Permanently store an important fact so it is still known in future sessions, after this terminal is closed and reopened. Use for user preferences, project decisions, or anything worth not forgetting.",
             "parameters": {
@@ -466,6 +484,11 @@ def execute_tool(name, arguments):
         elif name == "fetch_url":
             output = fetch_url(arguments["url"])
             if output.startswith("BLOCKED:") or output.startswith("Error"):
+                success = False
+
+        elif name == "web_search":
+            output = web_search(arguments["query"])
+            if output.startswith("Error") or output.startswith("Search API error") or output.startswith("Search not configured"):
                 success = False
 
         elif name == "remember":

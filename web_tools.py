@@ -103,3 +103,66 @@ def fetch_url(url: str, max_chars: int = 3000) -> str:
         return text[:max_chars] + f"\n... [truncated, {len(text)} total characters]"
 
     return text
+
+
+def parse_search_results(data: dict, max_results: int = 5) -> str:
+    """
+    Turn Google Custom Search JSON API's raw response into readable
+    text. Pure function, no network — testable against fabricated
+    responses matching the real API's schema.
+    """
+    if "error" in data:
+        message = data["error"].get("message", "unknown error")
+        return f"Search API error: {message}"
+
+    items = data.get("items", [])
+    if not items:
+        return "No results found."
+
+    lines = []
+    for item in items[:max_results]:
+        title = item.get("title", "Untitled")
+        link = item.get("link", "")
+        snippet = item.get("snippet", "").replace("\n", " ")
+        lines.append(f"- {title}\n  {link}\n  {snippet}")
+
+    return "\n\n".join(lines)
+
+
+def web_search(query: str, max_results: int = 5) -> str:
+    """
+    Search using Google's Custom Search JSON API, restricted to
+    whatever sites were configured in the Programmable Search Engine
+    (this is NOT unrestricted whole-web search — see setup notes).
+    Requires GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX environment
+    variables to be set.
+    """
+    import os
+
+    api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
+    cx = os.environ.get("GOOGLE_SEARCH_CX")
+
+    if not api_key or not cx:
+        return (
+            "Search not configured: set the GOOGLE_SEARCH_API_KEY and "
+            "GOOGLE_SEARCH_CX environment variables."
+        )
+
+    try:
+        response = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params={
+                "key": api_key,
+                "cx": cx,
+                "q": query,
+                "num": min(max_results, 10)
+            },
+            timeout=10
+        )
+        data = response.json()
+    except requests.exceptions.Timeout:
+        return "Error: search request timed out after 10 seconds"
+    except requests.exceptions.RequestException as e:
+        return f"Error performing search: {e}"
+
+    return parse_search_results(data, max_results)

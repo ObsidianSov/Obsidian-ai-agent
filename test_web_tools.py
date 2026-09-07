@@ -8,7 +8,7 @@ fetch_url() network call still needs to be verified on a real
 device with internet access; these tests cannot confirm that.
 """
 
-from web_tools import is_safe_url, extract_text_from_html
+from web_tools import is_safe_url, extract_text_from_html, parse_search_results
 
 
 def run_all_tests():
@@ -54,6 +54,46 @@ def run_all_tests():
     text3 = extract_text_from_html(html3)
     ok = "  " not in text3  # no double-spaces left after collapsing
     print(f"{'PASS' if ok else 'FAIL'}: extract_text_from_html collapses whitespace")
+    results.append(ok)
+
+    # --- parse_search_results tests ---
+
+    real_shaped_response = {
+        "items": [
+            {"title": "Open-Meteo Docs", "link": "https://open-meteo.com/en/docs", "snippet": "Free weather API"},
+            {"title": "GitHub - open-meteo", "link": "https://github.com/open-meteo", "snippet": "Source code"},
+        ]
+    }
+    parsed = parse_search_results(real_shaped_response)
+    ok = "Open-Meteo Docs" in parsed and "GitHub - open-meteo" in parsed
+    print(f"{'PASS' if ok else 'FAIL'}: parse_search_results extracts titles from real-shaped response")
+    results.append(ok)
+
+    ok = "https://open-meteo.com/en/docs" in parsed
+    print(f"{'PASS' if ok else 'FAIL'}: parse_search_results extracts links")
+    results.append(ok)
+
+    empty_response = {"items": []}
+    ok = parse_search_results(empty_response) == "No results found."
+    print(f"{'PASS' if ok else 'FAIL'}: parse_search_results handles empty results gracefully")
+    results.append(ok)
+
+    no_items_key_response = {}
+    ok = parse_search_results(no_items_key_response) == "No results found."
+    print(f"{'PASS' if ok else 'FAIL'}: parse_search_results handles missing 'items' key (zero results)")
+    results.append(ok)
+
+    error_response = {"error": {"message": "API key not valid"}}
+    ok = "API key not valid" in parse_search_results(error_response)
+    print(f"{'PASS' if ok else 'FAIL'}: parse_search_results surfaces API errors clearly")
+    results.append(ok)
+
+    many_items_response = {
+        "items": [{"title": f"Result {i}", "link": f"https://example.com/{i}", "snippet": ""} for i in range(10)]
+    }
+    limited = parse_search_results(many_items_response, max_results=3)
+    ok = limited.count("- Result") == 3
+    print(f"{'PASS' if ok else 'FAIL'}: parse_search_results respects max_results limit")
     results.append(ok)
 
     passed = sum(results)
