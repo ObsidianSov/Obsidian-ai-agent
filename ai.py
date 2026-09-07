@@ -8,6 +8,7 @@ import requests
 from memory_system import MemorySystem
 from audit_log import AuditLog
 from web_tools import fetch_url, web_search
+from killswitch import is_killed, killswitch_path
 
 
 # ============================================================
@@ -458,6 +459,14 @@ def execute_tool(name, arguments):
     success = True
     output = ""
 
+    if is_killed(BASE_DIR):
+        output = (
+            "KILLED: Emergency kill switch is active. No tool will execute "
+            f"until {killswitch_path(BASE_DIR)} is removed."
+        )
+        audit.record(tool_name=name, arguments=arguments, success=False, output=output, tier="KILLED")
+        return output
+
     try:
 
         if name == "list_files":
@@ -597,6 +606,13 @@ if _startup_memories:
 
 
 while True:
+
+    if is_killed(BASE_DIR):
+        print(
+            f"\n[KILL SWITCH ACTIVE] Found {killswitch_path(BASE_DIR)} — "
+            "halting immediately. Delete that file to resume."
+        )
+        break
 
     try:
         user_input = input("You: ")
