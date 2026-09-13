@@ -194,21 +194,22 @@ class ContextInjector:
     def format_for_memory(self) -> str:
         """Format context for memory storage"""
         parts = []
-        
+
         # Current state
-        ctx = self._get_grounded_context()
-        if ctx:
+        provider = self._get_grounded_context()
+        if provider:
+            ctx = provider.refresh()
             parts.append(f"Time: {ctx.timestamp}")
             parts.append(f"Workspace: {ctx.workspace}")
-        
+
         # Owner info
         owner = self._get_owner_profile()
         if owner:
             parts.append(f"Owner: {owner.get_name()}")
             if owner.profile.current_project:
                 parts.append(f"Project: {owner.profile.current_project}")
-        
-        return "\n".join(parts)
+
+        return "\n".join(parts)  
     
     def create_task_context(self, task: str) -> Dict[str, Any]:
         """Create context dict for a specific task"""

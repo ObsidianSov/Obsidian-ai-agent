@@ -1,0 +1,87 @@
+{
+"project": {
+"name": "Obsidian AI",
+"version": "M0.3-audit",
+"status": "architecture_consolidation",
+"owner": "Ahmad Suleiman"
+},
+"current_milestone": {
+"id": "M0.3",
+"name": "Architecture Consolidation Audit",
+"status": "in_progress"
+},
+"completed": [
+{
+"id": "M0.1",
+"name": "Action Gate",
+"status": "complete",
+"tests_passed": 35,
+"tests_failed": 0
+},
+{
+"id": "M0.2",
+"name": "Identity, Owner Profile & Grounded Context",
+"status": "complete",
+"tests_passed": 45,
+"tests_failed": 0
+}
+],
+"working": [
+"Architecture consolidation",
+"Canonical agent architecture",
+"Integration of M0.2 into active runtime"
+],
+"known_problems": [
+"Two agent generations exist",
+"Two memory systems exist",
+"Two tool systems exist",
+"Safety logic is duplicated",
+"Audit implementations are duplicated",
+"Root ai.py does not fully use agent_core identity/context",
+"LLM provider logic is duplicated",
+"No authoritative machine-readable project state existed before this file"
+],
+"canonical_direction": {
+"agent": "workspace/agent_core/agent.py",
+"reasoning": "workspace/agent_core/reasoning.py",
+"llm": "workspace/agent_core/llm.py",
+"tools": "workspace/agent_core/tools.py",
+"executor": "workspace/agent_core/executor.py",
+"identity": "workspace/agent_core/identity.py",
+"owner_profile": "workspace/agent_core/owner_profile.py",
+"grounded_context": "workspace/agent_core/grounded_context.py",
+"context_injector": "workspace/agent_core/context_injector.py",
+"memory": "workspace/agent_core/memory.py"
+},
+"current_runtime": {
+"entry_point": "ai.py",
+"status": "working",
+"migration_required": true
+},
+"next_actions": [
+"Audit dependencies between root runtime and agent_core",
+"Select canonical audit implementation",
+"Select canonical memory implementation",
+"Select canonical LLM provider implementation",
+"Select canonical web implementation",
+"Centralize action-gate enforcement",
+"Route active runtime through agent_core",
+"Run regression tests",
+"Archive obsolete components only after successful migration"
+],
+"deletion_policy": {
+"allowed": false,
+"reason": "No component should be deleted until its replacement is verified."
+},
+"future_phases": [
+"M0.3 Architecture Consolidation",
+"M0.4 Control Kernel",
+"M0.5 Active Runtime Integration",
+"Phase 1 Voice & Conversation",
+"Phase 2 Vision & Awareness",
+"Phase 3 System Control",
+"Phase 4 Memory & Context",
+"Phase 5 Real-Time Data & Automation",
+"Phase 6 IoT & Hardware"
+]
+}

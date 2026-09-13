@@ -1,0 +1,9 @@
+=== Next Tool Call ===
+Finish reason: tool_calls
+Content: None
+Number of tool calls: 1
+
+Tool Call 1:
+  ID: call_6ddd6f3c
+  Name: list_files
+  Arguments: {'path': './'}

@@ -1,0 +1,27 @@
+{
+  "id": "default",
+  "name": "User",
+  "email": "",
+  "timezone": "UTC",
+  "language": "en",
+  "preferences": {
+    "verbose": true,
+    "confirm_destructive": true,
+    "max_steps": 10,
+    "store_memory": true
+  },
+  "default_settings": {
+    "model": "anthropic/claude-3-haiku",
+    "temperature": 0.7,
+    "max_tokens": 1024
+  },
+  "workspace_root": ".",
+  "current_project": "",
+  "active_tasks": [],
+  "custom_knowledge": {},
+  "key_facts": [],
+  "interaction_count": 22,
+  "last_seen": "2026-09-13T14:53:02.451804",
+  "created_at": "2026-09-13T14:05:05.940106",
+  "updated_at": "2026-09-13T14:53:02.451821"
+}

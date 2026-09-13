@@ -1,128 +1,255 @@
-﻿"""
-Agent Orchestrator - Universal Tool Calling with M0.2 Context Integration
+"""
+Obsidian Agent Orchestrator
 
-Phase 4 Updated: Works with both native function calling and JSON fallback.
-M0.1: All LLM-generated tool calls pass through Action Gate before execution.
-M0.2: Integrates Identity, Owner Profile, and Grounded Context.
+M0.3 Architecture Consolidation
+--------------------------------
+Reasoning -> Agent -> Executor -> Action Gate -> Tool
+                                  -> Audit
+
+Responsibilities:
+- Agent: orchestration, context, memory, and public API
+- Reasoning: planning / ReAct loop / LLM interaction
+- Executor: tool execution and safety enforcement
+- Action Gate: command safety classification
+- Audit Log: execution recording
+
+M0.2:
+- Identity
+- Owner Profile
+- Grounded Context
+- Context Injection
+
+M0.3:
+- Removed duplicate Action Gate logic from Agent
+- Executor is the single execution/safety authority
+- Native tool calls and JSON fallback use the same execution path
 """
 
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-import json
 import os
-import sys
+import json
+
+
+# ---------------------------------------------------------------------------
+# Imports
+# ---------------------------------------------------------------------------
 
 try:
-    from agent_core.tools import ToolRegistry, tools
+    from agent_core.tools import ToolRegistry
     from agent_core.memory import MemorySystem
-    from agent_core.reasoning import UniversalReActEngine, LLMReActEngine, gate_check
+    from agent_core.reasoning import UniversalReActEngine
     from agent_core.executor import ToolExecutor
     from agent_core.llm import (
         OpenRouterProvider,
-        ToolDefinition,
         ConfigurationError,
-        JSONParser
+        JSONParser,
     )
-    # M0.2: Context modules
-    from agent_core.identity import AgentIdentity
+
+    # M0.2 Context System
+    from agent_core.identity import AgentIdentity, IdentityConfig
     from agent_core.owner_profile import OwnerProfileManager
     from agent_core.grounded_context import GroundedContextProvider
     from agent_core.context_injector import ContextInjector, InjectionConfig
+
 except ImportError:
-    from tools import ToolRegistry, tools
+    from tools import ToolRegistry
     from memory import MemorySystem
-    from reasoning import UniversalReActEngine, LLMReActEngine, gate_check
+    from reasoning import UniversalReActEngine
     from executor import ToolExecutor
-    from llm import OpenRouterProvider, ToolDefinition, ConfigurationError, JSONParser
-    # M0.2: Context modules
-    from identity import AgentIdentity
+    from llm import (
+        OpenRouterProvider,
+        ConfigurationError,
+        JSONParser,
+    )
+
+    # M0.2 Context System
+    from identity import AgentIdentity, IdentityConfig
     from owner_profile import OwnerProfileManager
     from grounded_context import GroundedContextProvider
     from context_injector import ContextInjector, InjectionConfig
 
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
 @dataclass
 class AgentConfig:
+    """Configuration for an Obsidian Agent instance."""
+
     name: str = "Obsidian"
+
+    # ReAct
     max_steps: int = 10
+
+    # Output / behavior
     verbose: bool = True
     store_memory: bool = True
     reflection_enabled: bool = True
+
+    # LLM
     llm_model: Optional[str] = None
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1024
-    # M0.2: Context settings
+
+    # M0.2 Context
     context_enabled: bool = True
     context_max_length: int = 3000
 
 
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
+
 class Agent:
     """
-    Main Agent class with universal tool calling and M0.2 context support.
-    
-    M0.2 adds:
-    - Identity: The agent knows who it is
-    - Owner Profile: The agent knows about the user
-    - Grounded Context: The agent is grounded in reality (time, place, state)
+    Main Obsidian Agent.
+
+    The Agent is responsible for orchestration.
+
+    It does NOT perform Action Gate checks itself.
+
+    All tool execution follows:
+
+        Agent
+          |
+          v
+        Executor
+          |
+          v
+      Action Gate
+          |
+          v
+         Tool
+
+    This prevents multiple components from implementing different
+    versions of the safety policy.
     """
-    
-    def __init__(self, config: AgentConfig = None, workspace: str = "."):
+
+    def __init__(
+        self,
+        config: AgentConfig = None,
+        workspace: str = ".",
+    ):
         self.config = config or AgentConfig()
         self.workspace = workspace
-        
-        # Initialize components
+
+        # ---------------------------------------------------------------
+        # Core systems
+        # ---------------------------------------------------------------
+
         self.tools = ToolRegistry()
-        self.memory = MemorySystem(workspace)
-        self.executor = ToolExecutor(self.tools)
-        
-        # M0.2: Initialize context system
+
+        self.memory = MemorySystem(
+            workspace
+        )
+
+        self.executor = ToolExecutor(
+            self.tools,
+            workspace=workspace,
+        )
+
+        # ---------------------------------------------------------------
+        # M0.2 Context System
+        # ---------------------------------------------------------------
+
         self._init_context_system()
-        
-        # Initialize LLM
+
+        # ---------------------------------------------------------------
+        # LLM
+        # ---------------------------------------------------------------
+
         try:
             self.llm = OpenRouterProvider(
                 model=self.config.llm_model,
                 temperature=self.config.llm_temperature,
-                max_tokens=self.config.llm_max_tokens
+                max_tokens=self.config.llm_max_tokens,
             )
+
             self.llm_available = True
+
         except ConfigurationError as e:
-            print(f"[!] LLM not available: {e}")
+            if self.config.verbose:
+                print(f"[!] LLM not available: {e}")
+
             self.llm = None
             self.llm_available = False
-        
-        # Initialize ReAct engine
-        if self.llm:
+
+        # ---------------------------------------------------------------
+        # ReAct Engine
+        # ---------------------------------------------------------------
+
+        if self.llm is not None:
+
             self.react = UniversalReActEngine(
                 llm_provider=self.llm,
                 max_steps=self.config.max_steps,
-                system_prompt=self._build_system_prompt()
+                system_prompt=self._build_system_prompt(),
             )
-            self.react.set_tool_executor(self._execute_tool)
-            self.react.set_gate_callback(self._gate_approval_callback)
+
+            # IMPORTANT:
+            # The ReAct engine delegates tool execution to the Agent,
+            # which delegates it to the Executor.
+            #
+            # The Executor is therefore the single Action Gate authority.
+            self.react.set_tool_executor(
+                self._execute_tool
+            )
+
         else:
             self.react = None
-    
+
+    # -------------------------------------------------------------------
+    # M0.2 Context System
+    # -------------------------------------------------------------------
+
     def _init_context_system(self):
-        """M0.2: Initialize the identity, owner profile, and context system"""
+        """Initialize Identity, Owner Profile, and Grounded Context."""
+
+        # ---------------------------------------------------------------
         # Identity
-        self.identity = AgentIdentity()
-        
-        # Owner profile
-        self.owner_profile = OwnerProfileManager(
-            profile_path=os.path.join(self.workspace, "knowledge/owner.json")
+        # ---------------------------------------------------------------
+
+        identity_config = IdentityConfig(
+            name=self.config.name
         )
-        
-        # Grounded context
+
+        self.identity = AgentIdentity(
+            config=identity_config
+        )
+
+        # ---------------------------------------------------------------
+        # Owner Profile
+        # ---------------------------------------------------------------
+
+        owner_profile_path = os.path.join(
+            self.workspace,
+            "knowledge",
+            "owner.json",
+        )
+
+        self.owner_profile = OwnerProfileManager(
+            profile_path=owner_profile_path
+        )
+
+        # ---------------------------------------------------------------
+        # Grounded Context
+        # ---------------------------------------------------------------
+
         self.grounded_context = GroundedContextProvider(
             owner_profile=self.owner_profile,
             memory_system=self.memory,
-            workspace=self.workspace
+            workspace=self.workspace,
         )
-        
-        # Context injector
+
+        # ---------------------------------------------------------------
+        # Context Injector
+        # ---------------------------------------------------------------
+
         context_config = InjectionConfig(
             max_context_length=self.config.context_max_length,
+
             include_identity=True,
             include_owner_profile=True,
             include_time_context=True,
@@ -130,367 +257,874 @@ class Agent:
             include_memory=True,
             include_capabilities=True,
             include_limitations=True,
-            include_key_facts=True
+            include_key_facts=True,
         )
-        
+
         self.context_injector = ContextInjector(
             identity=self.identity,
             owner_profile=self.owner_profile,
             grounded_context=self.grounded_context,
-            config=context_config
+            config=context_config,
         )
-    
-    def _gate_approval_callback(self, action: str, action_input: Dict, reason: str) -> bool:
-        """Handle approval-tier actions from the Action Gate."""
-        return self.executor.confirm_callback(action, action_input, reason)
-    
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with M0.2 context injection"""
-        base = f"""You are {self.config.name}, an AI agent with access to tools.
 
-Use tools when you need to read files, write files, run commands, or search.
-For simple questions, provide the answer directly.
-Think step by step for complex tasks."""
-        
+    # -------------------------------------------------------------------
+    # System Prompt
+    # -------------------------------------------------------------------
+
+    def _build_system_prompt(self) -> str:
+        """
+        Build the system prompt.
+
+        M0.2 context is injected here so the LLM receives identity,
+        owner, workspace, memory, and grounded context.
+        """
+
+        base = f"""
+You are {self.config.name}, an AI agent with access to tools.
+
+Use tools when you need to:
+- read files
+- write files
+- create directories
+- run commands
+- search the web
+- retrieve information
+
+For simple questions, answer directly.
+
+For complex tasks, reason carefully and use the available tools when
+necessary.
+
+Do not claim that an action was performed unless the corresponding
+tool actually executed successfully.
+""".strip()
+
         if self.config.context_enabled:
-            return self.context_injector.inject_system_prompt(base)
-        
+            return self.context_injector.inject_system_prompt(
+                base
+            )
+
         return base
-    
+
+    # -------------------------------------------------------------------
+    # Tool Instructions
+    # -------------------------------------------------------------------
+
     def _build_tool_instructions(self) -> str:
-        """Build tool usage instructions"""
-        lines = ["\nAVAILABLE TOOLS:"]
-        
+        """Build instructions describing the available tools."""
+
+        lines = [
+            "",
+            "AVAILABLE TOOLS:",
+        ]
+
         for tool in self.tools.list_tools():
-            name = tool["name"]
-            desc = tool.get("description", "")
+
+            name = tool.get("name", "")
+            description = tool.get("description", "")
             params = tool.get("params", {})
-            
+
             if params:
+
                 param_parts = []
-                for pname, pinfo in params.items():
-                    ptype = pinfo.get("type", "any")
-                    pdesc = pinfo.get("description", "")
-                    param_parts.append(f"{pname}: {ptype}")
-                    if pdesc:
-                        lines.append(f"  - {pname}: {pdesc}")
-                
-                lines.append(f"- {name}({', '.join(param_parts)}): {desc}")
+
+                for param_name, param_info in params.items():
+
+                    param_type = param_info.get(
+                        "type",
+                        "any",
+                    )
+
+                    param_description = param_info.get(
+                        "description",
+                        "",
+                    )
+
+                    param_parts.append(
+                        f"{param_name}: {param_type}"
+                    )
+
+                    if param_description:
+                        lines.append(
+                            f"  - {param_name}: "
+                            f"{param_description}"
+                        )
+
+                lines.append(
+                    f"- {name}"
+                    f"({', '.join(param_parts)}): "
+                    f"{description}"
+                )
+
             else:
-                lines.append(f"- {name}: {desc}")
-        
-        lines.append("\nTo use a tool, output ONLY this JSON:")
-        lines.append('{"action": "tool_name", "action_input": {"param": "value"}}')
-        lines.append("\nWhen done, output:")
-        lines.append('{"action": "final", "content": "your answer"}')
-        
+                lines.append(
+                    f"- {name}: {description}"
+                )
+
+        lines.extend(
+            [
+                "",
+                "For JSON fallback tool calls, output ONLY:",
+                '{"action": "tool_name", '
+                '"action_input": {"param": "value"}}',
+                "",
+                "When finished, output:",
+                '{"action": "final", '
+                '"content": "your answer"}',
+            ]
+        )
+
         return "\n".join(lines)
-    
-    def _execute_tool(self, tool_name: str, arguments: Dict) -> str:
-        """Execute a tool (M0.1: already gate-checked by reasoning engine)"""
-        return self.executor.execute(tool_name, arguments)
-    
-    def run(self, task: str, context: Dict = None) -> str:
-        """Run a task using the ReAct loop"""
+
+    # -------------------------------------------------------------------
+    # Tool Execution
+    # -------------------------------------------------------------------
+
+    def _execute_tool(
+        self,
+        tool_name: str,
+        arguments: Dict,
+    ) -> str:
+        """
+        Execute a tool through the canonical Executor.
+
+        IMPORTANT:
+        No Action Gate logic belongs here.
+
+        Executor handles:
+            tool validation
+                ->
+            Action Gate
+                ->
+            approval
+                ->
+            execution
+                ->
+            audit
+        """
+
+        return self.executor.execute(
+            tool_name,
+            arguments,
+        )
+
+    # -------------------------------------------------------------------
+    # Standard Run
+    # -------------------------------------------------------------------
+
+    def run(
+        self,
+        task: str,
+        context: Dict = None,
+    ) -> str:
+        """Run a task through the ReAct engine."""
+
         if not self.llm_available:
-            return "Error: LLM not available. Set OPENROUTER_API_KEY."
-        
+            return (
+                "Error: LLM not available. "
+                "Set OPENROUTER_API_KEY."
+            )
+
         if self.config.verbose:
-            print(f"\n[*] {self.config.name} processing: {task}")
-        
-        self.memory.working.add("user", task)
+            print(
+                f"\n[*] {self.config.name} processing: "
+                f"{task}"
+            )
+
+        # ---------------------------------------------------------------
+        # Record user interaction
+        # ---------------------------------------------------------------
+
+        self.memory.working.add(
+            "user",
+            task,
+        )
+
         self.owner_profile.record_interaction()
-        
+
+        # ---------------------------------------------------------------
+        # Reset ReAct state
+        # ---------------------------------------------------------------
+
         available_tools = self.tools.list_tools()
-        
+
         self.react.reset(
             task=task,
             tools=available_tools,
-            context=context or {}
+            context=context or {},
         )
-        
+
+        # ---------------------------------------------------------------
+        # Run reasoning loop
+        # ---------------------------------------------------------------
+
         result = self.react.run()
-        
-        self.memory.working.add("assistant", result)
-        
+
+        # ---------------------------------------------------------------
+        # Store response
+        # ---------------------------------------------------------------
+
+        self.memory.working.add(
+            "assistant",
+            result,
+        )
+
+        # ---------------------------------------------------------------
+        # Persist useful tool observations
+        # ---------------------------------------------------------------
+
         if self.config.store_memory:
-            for obs in self.react.get_observations():
+
+            for observation in self.react.get_observations():
+
                 self.memory.remember(
-                    f"Tool {obs.tool_name}: {obs.result[:100]}",
-                    importance=2
+                    (
+                        f"Tool "
+                        f"{observation.tool_name}: "
+                        f"{observation.result[:100]}"
+                    ),
+                    importance=2,
                 )
-        
+
+        # ---------------------------------------------------------------
+        # Output
+        # ---------------------------------------------------------------
+
         if self.config.verbose:
-            preview = result[:200] + "..." if len(result) > 200 else result
-            print(f"[OK] {preview}")
-        
+
+            preview = (
+                result[:200] + "..."
+                if len(result) > 200
+                else result
+            )
+
+            print(
+                f"[OK] {preview}"
+            )
+
         return result
-    
-    def run_with_trace(self, task: str, context: Dict = None) -> tuple:
-        """Run task and return (response, trace)"""
+
+    # -------------------------------------------------------------------
+    # Run With Trace
+    # -------------------------------------------------------------------
+
+    def run_with_trace(
+        self,
+        task: str,
+        context: Dict = None,
+    ) -> tuple:
+        """
+        Run a task and return:
+
+            (response, trace)
+
+        Both native tool calls and JSON fallback calls use the same
+        Executor path.
+
+        There is intentionally NO Action Gate logic here.
+        """
+
         if not self.llm_available:
-            return "Error: LLM not available.", []
-        
+            return (
+                "Error: LLM not available.",
+                [],
+            )
+
         if self.config.verbose:
-            print(f"\n[*] {self.config.name} processing: {task}")
-        
-        self.memory.working.add("user", task)
+            print(
+                f"\n[*] {self.config.name} processing: "
+                f"{task}"
+            )
+
+        # ---------------------------------------------------------------
+        # Record interaction
+        # ---------------------------------------------------------------
+
+        self.memory.working.add(
+            "user",
+            task,
+        )
+
         self.owner_profile.record_interaction()
+
         available_tools = self.tools.list_tools()
-        
-        self.react.reset(task, available_tools, context or {})
-        
+
+        # ---------------------------------------------------------------
+        # Reset reasoning state
+        # ---------------------------------------------------------------
+
+        self.react.reset(
+            task,
+            available_tools,
+            context or {},
+        )
+
+        # ---------------------------------------------------------------
+        # Trace state
+        # ---------------------------------------------------------------
+
         trace = []
         step = 0
-        
-        # Build tool instructions
-        tool_instructions = self._build_tool_instructions()
-        system_prompt = self._build_system_prompt() + "\n" + tool_instructions
-        
+
+        # ---------------------------------------------------------------
+        # Prompt configuration
+        # ---------------------------------------------------------------
+
+        tool_instructions = (
+            self._build_tool_instructions()
+        )
+
+        system_prompt = (
+            self._build_system_prompt()
+            + "\n"
+            + tool_instructions
+        )
+
+        # ---------------------------------------------------------------
+        # ReAct loop
+        # ---------------------------------------------------------------
+
         while step < self.config.max_steps:
+
             step += 1
-            
-            # Build prompt for this step
-            prompt = f"Task: {task}\n\nStep {step} of {self.config.max_steps}."
-            
-            # Add previous observations
-            observations = self.react.get_observations()
+
+            # -----------------------------------------------------------
+            # Build step prompt
+            # -----------------------------------------------------------
+
+            prompt = (
+                f"Task: {task}\n\n"
+                f"Step {step} of "
+                f"{self.config.max_steps}."
+            )
+
+            observations = (
+                self.react.get_observations()
+            )
+
             if observations:
-                prompt += "\n\nPrevious results:"
-                for obs in observations:
-                    result = obs.result[:80] + "..." if len(obs.result) > 80 else obs.result
-                    prompt += f"\n- {obs.tool_name}: {result}"
-            
-            prompt += "\n\nWhat should I do next? Output JSON only."
-            
-            try:
-                response = self.llm.complete_with_tools(
-                    prompt=prompt,
-                    tools=self.react.tools,
-                    system_prompt=system_prompt
+
+                prompt += (
+                    "\n\nPrevious results:"
                 )
+
+                for observation in observations:
+
+                    result_preview = (
+                        observation.result[:80]
+                        + "..."
+                        if len(observation.result) > 80
+                        else observation.result
+                    )
+
+                    prompt += (
+                        f"\n- "
+                        f"{observation.tool_name}: "
+                        f"{result_preview}"
+                    )
+
+            prompt += (
+                "\n\nWhat should I do next? "
+                "Output JSON only."
+            )
+
+            # -----------------------------------------------------------
+            # Ask LLM
+            # -----------------------------------------------------------
+
+            try:
+
+                response = (
+                    self.llm.complete_with_tools(
+                        prompt=prompt,
+                        tools=self.react.tools,
+                        system_prompt=system_prompt,
+                    )
+                )
+
             except Exception as e:
-                return f"Error: {str(e)}", trace
-            
-            trace_entry = {"step": step, "response": response}
-            
+
+                return (
+                    f"Error: {str(e)}",
+                    trace,
+                )
+
+            trace_entry = {
+                "step": step,
+                "response": response,
+            }
+
             tool_called = False
-            
+
+            # ===========================================================
+            # NATIVE TOOL CALLS
+            # ===========================================================
+
             if response.tool_calls:
-                for tc in response.tool_calls:
-                    if isinstance(tc, dict):
-                        name = tc.get("action") or tc.get("name", "")
-                        args = tc.get("action_input") or tc.get("arguments") or {}
+
+                for tool_call in response.tool_calls:
+
+                    # ---------------------------------------------------
+                    # Normalize native tool call format
+                    # ---------------------------------------------------
+
+                    if isinstance(
+                        tool_call,
+                        dict,
+                    ):
+
+                        name = (
+                            tool_call.get("action")
+                            or tool_call.get("name")
+                            or ""
+                        )
+
+                        args = (
+                            tool_call.get(
+                                "action_input"
+                            )
+                            or tool_call.get(
+                                "arguments"
+                            )
+                            or {}
+                        )
+
                     else:
-                        name = tc.name
-                        args = tc.arguments
-                    
-                    # M0.1: Gate check
-                    tier, reason = gate_check(name, args)
-                    
-                    if tier == "block":
-                        trace_entry["tool_call"] = {
-                            "name": name,
-                            "arguments": args,
-                            "result": f"Blocked by Action Gate: {reason}",
-                            "blocked": True
-                        }
-                        self.react.add_observation(name, args, f"Blocked by Action Gate: {reason}")
-                        tool_called = True
-                        continue
-                    
-                    if tier == "approval":
-                        approved = self._gate_approval_callback(name, args, reason)
-                        if not approved:
-                            trace_entry["tool_call"] = {
-                                "name": name,
-                                "arguments": args,
-                                "result": f"Cancelled by user: {reason}",
-                                "cancelled": True
-                            }
-                            self.react.add_observation(name, args, f"Cancelled by user: {reason}")
-                            tool_called = True
-                            continue
-                    
-                    result = self._execute_tool(name, args)
-                    
+
+                        name = tool_call.name
+                        args = tool_call.arguments
+
+                    # ---------------------------------------------------
+                    # Canonical execution path
+                    #
+                    # Executor performs:
+                    #   validation
+                    #   Action Gate
+                    #   approval
+                    #   execution
+                    #   audit
+                    # ---------------------------------------------------
+
+                    result = self._execute_tool(
+                        name,
+                        args,
+                    )
+
+                    # ---------------------------------------------------
+                    # Trace
+                    # ---------------------------------------------------
+
                     trace_entry["tool_call"] = {
                         "name": name,
                         "arguments": args,
-                        "result": result
+                        "result": result,
                     }
-                    
-                    self.react.add_observation(name, args, result)
+
+                    # ---------------------------------------------------
+                    # Observation
+                    # ---------------------------------------------------
+
+                    self.react.add_observation(
+                        name,
+                        args,
+                        result,
+                    )
+
                     tool_called = True
-            
+
+            # ===========================================================
+            # JSON FALLBACK
+            # ===========================================================
+
             elif response.content:
+
                 try:
-                    parsed = JSONParser.extract_json(response.content)
-                    action = parsed.get("action", "")
-                    
+
+                    parsed = (
+                        JSONParser.extract_json(
+                            response.content
+                        )
+                    )
+
+                    action = parsed.get(
+                        "action",
+                        "",
+                    )
+
+                    # ---------------------------------------------------
+                    # Final response
+                    # ---------------------------------------------------
+
                     if action == "final":
-                        trace_entry["final"] = parsed.get("content", response.content)
-                        self.memory.working.add("assistant", trace_entry["final"])
-                        return trace_entry["final"], trace + [trace_entry]
-                    
+
+                        final_content = (
+                            parsed.get(
+                                "content",
+                                response.content,
+                            )
+                        )
+
+                        trace_entry["final"] = (
+                            final_content
+                        )
+
+                        self.memory.working.add(
+                            "assistant",
+                            final_content,
+                        )
+
+                        return (
+                            final_content,
+                            trace + [trace_entry],
+                        )
+
+                    # ---------------------------------------------------
+                    # JSON tool call
+                    # ---------------------------------------------------
+
                     if action and action != "final":
-                        args = parsed.get("action_input") or {}
-                        
-                        tier, reason = gate_check(action, args)
-                        
-                        if tier == "block":
-                            trace_entry["tool_call"] = {
-                                "name": action,
-                                "arguments": args,
-                                "result": f"Blocked by Action Gate: {reason}",
-                                "blocked": True
-                            }
-                            self.react.add_observation(action, args, f"Blocked by Action Gate: {reason}")
-                            tool_called = True
-                        elif tier == "approval":
-                            approved = self._gate_approval_callback(action, args, reason)
-                            if not approved:
-                                trace_entry["tool_call"] = {
-                                    "name": action,
-                                    "arguments": args,
-                                    "result": f"Cancelled by user: {reason}",
-                                    "cancelled": True
-                                }
-                                self.react.add_observation(action, args, f"Cancelled by user: {reason}")
-                                tool_called = True
-                            else:
-                                result = self._execute_tool(action, args)
-                                trace_entry["tool_call"] = {
-                                    "name": action,
-                                    "arguments": args,
-                                    "result": result
-                                }
-                                self.react.add_observation(action, args, result)
-                                tool_called = True
-                        else:
-                            result = self._execute_tool(action, args)
-                            trace_entry["tool_call"] = {
-                                "name": action,
-                                "arguments": args,
-                                "result": result
-                            }
-                            self.react.add_observation(action, args, result)
-                            tool_called = True
-                        
-                except (ValueError, json.JSONDecodeError):
-                    self.memory.working.add("assistant", response.content)
-                    return response.content, trace + [trace_entry]
-            
+
+                        args = (
+                            parsed.get(
+                                "action_input"
+                            )
+                            or {}
+                        )
+
+                        # -----------------------------------------------
+                        # Canonical execution path.
+                        #
+                        # NO gate_check() here.
+                        # Executor owns the gate.
+                        # -----------------------------------------------
+
+                        result = self._execute_tool(
+                            action,
+                            args,
+                        )
+
+                        # -----------------------------------------------
+                        # Trace
+                        # -----------------------------------------------
+
+                        trace_entry["tool_call"] = {
+                            "name": action,
+                            "arguments": args,
+                            "result": result,
+                        }
+
+                        # -----------------------------------------------
+                        # Observation
+                        # -----------------------------------------------
+
+                        self.react.add_observation(
+                            action,
+                            args,
+                            result,
+                        )
+
+                        tool_called = True
+
+                except (
+                    ValueError,
+                    json.JSONDecodeError,
+                ):
+
+                    # ---------------------------------------------------
+                    # Plain-text fallback
+                    # ---------------------------------------------------
+
+                    self.memory.working.add(
+                        "assistant",
+                        response.content,
+                    )
+
+                    return (
+                        response.content,
+                        trace + [trace_entry],
+                    )
+
+            # -----------------------------------------------------------
+            # Continue after tool execution
+            # -----------------------------------------------------------
+
             if tool_called:
-                trace.append(trace_entry)
+
+                trace.append(
+                    trace_entry
+                )
+
                 continue
-            
+
+            # -----------------------------------------------------------
+            # Return plain response
+            # -----------------------------------------------------------
+
             if response.content:
-                self.memory.working.add("assistant", response.content)
-                return response.content, trace + [trace_entry]
-            
+
+                self.memory.working.add(
+                    "assistant",
+                    response.content,
+                )
+
+                return (
+                    response.content,
+                    trace + [trace_entry],
+                )
+
+            # Nothing happened
             break
-        
+
+        # ----------------------------------------------------------------
+        # Max-step summary
+        # ----------------------------------------------------------------
+
         summary = self.react.get_summary()
-        self.memory.working.add("assistant", summary)
-        return summary, trace
-    
-    # === M0.2: Context System Methods ===
-    
+
+        self.memory.working.add(
+            "assistant",
+            summary,
+        )
+
+        return (
+            summary,
+            trace,
+        )
+
+    # ===================================================================
+    # M0.2 CONTEXT API
+    # ===================================================================
+
     def get_identity(self) -> AgentIdentity:
-        """Get the agent's identity"""
+        """Return the agent identity."""
+
         return self.identity
-    
-    def get_owner_profile(self) -> OwnerProfileManager:
-        """Get the owner profile manager"""
+
+    def get_owner_profile(
+        self,
+    ) -> OwnerProfileManager:
+        """Return the owner profile manager."""
+
         return self.owner_profile
-    
-    def get_grounded_context(self) -> GroundedContextProvider:
-        """Get the grounded context provider"""
+
+    def get_grounded_context(
+        self,
+    ) -> GroundedContextProvider:
+        """Return the grounded context provider."""
+
         return self.grounded_context
-    
-    def refresh_context(self) -> Dict[str, Any]:
-        """Refresh all context and return as dict"""
-        ctx = self.grounded_context.refresh()
-        return ctx.to_dict()
-    
-    def set_owner_name(self, name: str):
-        """Set the owner's name"""
+
+    def refresh_context(
+        self,
+    ) -> Dict[str, Any]:
+        """Refresh grounded context and return it as a dictionary."""
+
+        context = (
+            self.grounded_context.refresh()
+        )
+
+        return context.to_dict()
+
+    def set_owner_name(
+        self,
+        name: str,
+    ):
+        """Set and persist the owner's name."""
+
         self.owner_profile.profile.name = name
         self.owner_profile.save()
-    
-    def add_key_fact(self, fact: str):
-        """Add a key fact about the owner"""
-        self.owner_profile.add_key_fact(fact)
-    
-    def set_current_project(self, project: str):
-        """Set the current project context"""
-        self.owner_profile.set_current_project(project)
-    
-    def add_active_task(self, task: str):
-        """Add an active task"""
-        self.owner_profile.add_active_task(task)
-    
-    def get_context_summary(self) -> str:
-        """Get a summary of all context"""
-        return self.grounded_context.get_context_summary()
-    
-    # === Memory Methods ===
-    
-    def remember(self, fact: str, importance: int = 3):
-        """Store a fact in memory"""
-        return self.memory.remember(fact, importance=importance)
-    
-    def recall(self, query: str) -> str:
-        """Search memory"""
-        return self.memory.recall(query)
-    
-    def forget(self, memory_id: str):
-        """Forget a memory"""
-        return self.memory.persistent.forget(memory_id)
-    
-    # === Tool & State Methods ===
-    
-    def get_tools(self) -> List[Dict]:
-        """List available tools"""
-        return self.tools.list_tools()
-    
-    def inspect(self) -> Dict:
-        """Get agent state including M0.2 context"""
-        state = {
-            "name": self.config.name,
-            "identity": self.identity.config.name,
-            "owner_name": self.owner_profile.get_name(),
-            "llm_available": self.llm_available,
-            "llm_model": self.config.llm_model,
-            "config": self.config.__dict__,
-            "recent_memories": len(self.memory.working.items),
-            "persistent_memories": len(self.memory.persistent.memories),
-            "knowledge_base": self.memory.knowledge.list_keys(),
-            "available_tools": len(self.tools.list_tools()),
-            "context": {
-                "timezone": self.grounded_context.default_timezone,
-                "workspace": self.grounded_context.workspace,
-                "current_project": self.owner_profile.get_current_project(),
-                "active_tasks": self.owner_profile.get_active_tasks(),
-                "interactions": self.owner_profile.get_interaction_count()
-            }
-        }
-        return state
 
+    def add_key_fact(
+        self,
+        fact: str,
+    ):
+        """Add a persistent key fact about the owner."""
+
+        self.owner_profile.add_key_fact(
+            fact
+        )
+
+    def set_current_project(
+        self,
+        project: str,
+    ):
+        """Set the current project."""
+
+        self.owner_profile.set_current_project(
+            project
+        )
+
+    def add_active_task(
+        self,
+        task: str,
+    ):
+        """Add an active owner task."""
+
+        self.owner_profile.add_active_task(
+            task
+        )
+
+    def get_context_summary(
+        self,
+    ) -> str:
+        """Return a human-readable context summary."""
+
+        return (
+            self.grounded_context
+            .get_context_summary()
+        )
+
+    # ===================================================================
+    # MEMORY API
+    # ===================================================================
+
+    def remember(
+        self,
+        fact: str,
+        importance: int = 3,
+    ):
+        """Store a fact in persistent memory."""
+
+        return self.memory.remember(
+            fact,
+            importance=importance,
+        )
+
+    def recall(
+        self,
+        query: str,
+    ) -> str:
+        """Search persistent memory."""
+
+        return self.memory.recall(
+            query
+        )
+
+    def forget(
+        self,
+        memory_id: str,
+    ):
+        """Forget a persistent memory."""
+
+        return self.memory.persistent.forget(
+            memory_id
+        )
+
+    # ===================================================================
+    # TOOL / STATE API
+    # ===================================================================
+
+    def get_tools(
+        self,
+    ) -> List[Dict]:
+        """Return the available tools."""
+
+        return self.tools.list_tools()
+
+    def inspect(self) -> Dict:
+        """
+        Return the current Agent state.
+
+        Useful for diagnostics and future control interfaces.
+        """
+
+        return {
+            "name": self.config.name,
+
+            "identity": (
+                self.identity.config.name
+            ),
+
+            "owner_name": (
+                self.owner_profile.get_name()
+            ),
+
+            "llm_available": (
+                self.llm_available
+            ),
+
+            "llm_model": (
+                self.config.llm_model
+            ),
+
+            "config": (
+                self.config.__dict__
+            ),
+
+            "recent_memories": (
+                len(
+                    self.memory.working.items
+                )
+            ),
+
+            "persistent_memories": (
+                len(
+                    self.memory.persistent.memories
+                )
+            ),
+
+            "knowledge_base": (
+                self.memory.knowledge.list_keys()
+            ),
+
+            "available_tools": (
+                len(
+                    self.tools.list_tools()
+                )
+            ),
+
+            "context": {
+                "timezone": (
+                    self.grounded_context
+                    .default_timezone
+                ),
+
+                "workspace": (
+                    self.grounded_context
+                    .workspace
+                ),
+
+                "current_project": (
+                    self.owner_profile
+                    .get_current_project()
+                ),
+
+                "active_tasks": (
+                    self.owner_profile
+                    .get_active_tasks()
+                ),
+
+                "interactions": (
+                    self.owner_profile
+                    .get_interaction_count()
+                ),
+            },
+        }
+
+
+# =========================================================================
+# FACTORY
+# =========================================================================
 
 def create_agent(
     name: str = "Obsidian",
     workspace: str = ".",
     verbose: bool = True,
-    context_enabled: bool = True
+    context_enabled: bool = True,
 ) -> Agent:
-    """Create a configured agent instance with M0.2 context support"""
+    """
+    Create a configured Obsidian Agent.
+    """
+
     config = AgentConfig(
         name=name,
         verbose=verbose,
         store_memory=True,
         reflection_enabled=True,
-        context_enabled=context_enabled
+        context_enabled=context_enabled,
     )
-    return Agent(config, workspace)
+
+    return Agent(
+        config=config,
+        workspace=workspace,
+    )

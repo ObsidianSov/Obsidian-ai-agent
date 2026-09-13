@@ -18,7 +18,7 @@ from killswitch import is_killed, killswitch_path
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MODEL = "minimax/minimax-m2.7:free"
+MODEL = "minimax/minimax-m2.7"
 
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = BASE_DIR / "workspace"
@@ -545,7 +545,8 @@ def ask_model(messages):
             "model": MODEL,
             "messages": messages,
             "tools": TOOLS,
-            "tool_choice": "auto"
+            "tool_choice": "auto",
+	    "max_tokens": 4096
         },
         timeout=180
     )
