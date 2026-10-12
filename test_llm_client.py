@@ -148,10 +148,26 @@ def run_all_tests():
     check(isinstance(exc, LLMFatalError) and "API key" in str(exc) and post.count("B") == 0,
           "401 stops immediately with a clear key message and never tries other models")
 
+    # 402 (out of credits) used to stop everything. A free model later in the
+    # chain can still work, so it now moves on to the next model instead.
+    (data, used), post, sleep = run_call(
+        {"A": [FakeResponse(402, {"error": {"message": "no credits"}})], "B": [FakeResponse(200, GOOD)]}, ["A", "B"])
+    check(used == "B" and post.count("A") == 1 and sleep.waits == [],
+          "402 on a paid model falls through to the next model with no retry")
+
     exc, post, sleep = expect_error(
-        {"A": [FakeResponse(402, {"error": {"message": "no credits"}})], "B": [FakeResponse(200, GOOD)]}, ["A", "B"], LLMFatalError)
-    check(isinstance(exc, LLMFatalError) and "credits" in str(exc) and post.count("B") == 0,
-          "402 stops immediately with a clear credits message")
+        {"A": [FakeResponse(402, {"error": {"message": "no credits"}})]}, ["A"], LLMFatalError)
+    check(isinstance(exc, LLMFatalError) and "credits" in str(exc) and "OBSIDIAN_MODELS" in str(exc),
+          "402 with no other model gives a clear credits message that says how to fix it")
+
+    exc, post, sleep = expect_error(
+        {"A": [FakeResponse(402, {"error": {"message": "no credits"}})], "B": [FakeResponse(404, {"error": "gone"})]}, ["A", "B"], LLMFatalError)
+    check(isinstance(exc, LLMFatalError) and "credits" in str(exc) and "A:" in str(exc) and "B:" in str(exc),
+          "if every model fails and one was a 402, the error still points at credits and lists each model")
+
+    exc, post, sleep = expect_error(
+        {"A": [FakeResponse(402, {"error": {"message": "no credits"}})]}, ["A"], LLMFatalError)
+    check(SECRET not in str(exc), "the API key never appears in a credits error")
 
     exc, post, sleep = expect_error(
         {"A": [FakeResponse(400, {"error": {"message": "bad request"}})], "B": [FakeResponse(200, GOOD)]}, ["A", "B"], LLMFatalError)

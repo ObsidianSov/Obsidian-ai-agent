@@ -35,11 +35,12 @@ FATAL_STATUS = {
     400: "The request was rejected as malformed. Switching models will not fix this.",
     401: "OpenRouter rejected the API key (missing, wrong, or revoked). "
          "Check OPENROUTER_API_KEY.",
-    402: "OpenRouter says the account is out of credits. Add credits, "
-         "or switch to a free model.",
     403: "OpenRouter refused the request (key permissions or content "
          "moderation).",
 }
+CREDITS_HINT = ("OpenRouter says the account is out of credits for this model. "
+                "Add credits, or put a free model (like openrouter/free) in "
+                "OBSIDIAN_MODELS.")
 NEXT_MODEL_STATUS = {404}                     # model/endpoint not found or no tool support
 RETRY_STATUS = {408, 429, 500, 502, 503, 504}  # temporary
 
@@ -84,6 +85,7 @@ def call_model(
         raise LLMFatalError("No models configured.")
 
     history = []  # one line per failed attempt, for the final error message
+    out_of_credits = False  # set if any model answered 402
 
     for model in models:
         attempt = 0
@@ -125,6 +127,16 @@ def call_model(
                     f"{_error_text(data, getattr(response, 'text', ''))})"
                 )
 
+            if status == 402:
+                # Credits only matter for paid models. A free model later in
+                # the chain may still work, so move on instead of stopping.
+                out_of_credits = True
+                history.append(
+                    f"{model}: out of credits (HTTP 402: "
+                    f"{_error_text(data, getattr(response, 'text', ''))})"
+                )
+                break
+
             if status in NEXT_MODEL_STATUS:
                 history.append(
                     f"{model}: not available (HTTP {status}: "
@@ -161,10 +173,12 @@ def call_model(
 
             return data, model
 
-    raise LLMError(
-        "All models failed:\n  " + "\n  ".join(history) if history
-        else "All models failed with no details."
-    )
+    details = "\n  ".join(history) if history else "no details"
+
+    if out_of_credits:
+        raise LLMFatalError(f"{CREDITS_HINT}\n  {details}")
+
+    raise LLMError(f"All models failed:\n  {details}")
 
 
 def parse_tool_arguments(raw):
