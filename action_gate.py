@@ -10,6 +10,12 @@ command, or one that reaches outside its workspace, by mistake or
 under a confused instruction. It is not a security boundary against
 a malicious actor with full control of the input.
 
+Known gap (by design, for now): a Python/shell script that the agent
+writes itself and then runs is not inspected line by line. To limit the
+damage, run_command() starts every command with scrubbed_env() so API
+keys and tokens are simply not present in the child process. A real
+sandbox is a later milestone.
+
 Pure functions only, no I/O — safe to import for testing without
 triggering any side effects.
 """
@@ -43,6 +49,52 @@ APPROVAL_PATTERNS = [
     r"\btruncate\s+table\b",
     r"\bchmod\s+777\b",
 ]
+
+# (regex, plain-English label). Checked after APPROVAL_PATTERNS. These cover
+# ways around the simple patterns above that a confused or tricked agent
+# could use: deleting via find, running inline code, piping downloads into a
+# shell, and reading secrets.
+RISKY_PATTERNS = [
+    (r"\bfind\b[^|;&]*\s-delete\b", "find -delete removes files"),
+    (r"\b(python[0-9.]*|py|node|nodejs|perl|ruby|php)\s+-[ce]\b",
+     "inline code passed straight to an interpreter"),
+    (r"\|\s*(sudo\s+)?(sh|bash|zsh|dash|ksh)\b",
+     "output piped into a shell"),
+    (r"\|\s*(python[0-9.]*|perl|ruby|node)\s*(-\s*)?($|[;&|])",
+     "output piped into an interpreter as code"),
+    (r"<\(\s*(curl|wget)\b", "downloaded script run through process substitution"),
+    (r"\beval\b", "eval runs text as code"),
+    (r"\bbase64\s+(-d|--decode)\b", "decoding hidden text (often used to disguise commands)"),
+    (r"(^|[;&|]\s*)(env|printenv|export|set)\s*($|[|;&>])",
+     "lists environment variables (can reveal secrets)"),
+    (r"\bprintenv\s+\S", "reads a specific environment variable"),
+    (r"\$\{?\w*(key|token|secret|passw(or)?d|credential)\w*\}?",
+     "references a secret-looking variable"),
+    (r"(^|[\s/\"'])\.env\b", "touches a .env file (secrets)"),
+    (r"\.ssh\b|\bid_rsa\b|\.netrc\b|\.git-credentials\b", "touches credential files"),
+    (r"\bkillswitch\b", "touches the kill switch"),
+]
+
+# Environment variables whose names look like secrets are removed before any
+# command runs, so a command cannot print or send them.
+SECRET_NAME_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
+SECRET_NAME_PREFIXES = ("OPENROUTER", "GOOGLE", "OPENAI", "ANTHROPIC", "GITHUB", "GH_", "AWS_", "AZURE_")
+
+
+def scrubbed_env(env):
+    """
+    Return a copy of `env` (a mapping such as os.environ) without anything
+    that looks like a secret. The original mapping is not modified.
+    """
+    clean = {}
+    for name, value in env.items():
+        upper = name.upper()
+        if any(hint in upper for hint in SECRET_NAME_HINTS):
+            continue
+        if upper.startswith(SECRET_NAME_PREFIXES):
+            continue
+        clean[name] = value
+    return clean
 
 
 def find_path_escapes(command: str, workspace_path: str):
@@ -103,5 +155,9 @@ def classify_command(command: str, workspace_path: str = None):
     for pattern in APPROVAL_PATTERNS:
         if re.search(pattern, lowered):
             return "APPROVAL", f"matched approval-required pattern: {pattern}"
+
+    for pattern, label in RISKY_PATTERNS:
+        if re.search(pattern, lowered):
+            return "APPROVAL", f"risky command: {label}"
 
     return "ALLOW", None

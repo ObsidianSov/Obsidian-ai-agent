@@ -209,6 +209,7 @@ def run_command(command):
             command,
             shell=True,
             cwd=str(WORKSPACE),
+            env=scrubbed_env(os.environ),
             capture_output=True,
             text=True,
             timeout=120
@@ -242,7 +243,7 @@ def run_command(command):
 # execution + terminal approval prompt, which needs run_command
 # and input() and so can't live in the side-effect-free module.
 
-from action_gate import classify_command
+from action_gate import classify_command, scrubbed_env
 
 
 def gated_run_command(command: str) -> str:
