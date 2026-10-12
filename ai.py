@@ -9,6 +9,7 @@ from memory_system import MemorySystem
 from audit_log import AuditLog
 from web_tools import fetch_url, web_search
 from killswitch import is_killed, killswitch_path
+from llm_client import call_model, models_from_env, build_tool_messages
 
 
 # ============================================================
@@ -19,6 +20,10 @@ API_KEY = os.getenv("OPENROUTER_API_KEY")
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MODEL = "minimax/minimax-m2.7"
+
+# Fallback chain: first model is tried first. To add fallbacks, set the
+# environment variable OBSIDIAN_MODELS to a comma-separated list.
+MODELS = models_from_env([MODEL])
 
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = BASE_DIR / "workspace"
@@ -535,31 +540,16 @@ def execute_tool(name, arguments):
 
 def ask_model(messages):
 
-    response = requests.post(
-        URL,
-        headers={
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": MODEL,
-            "messages": messages,
-            "tools": TOOLS,
-            "tool_choice": "auto",
-	    "max_tokens": 4096
-        },
-        timeout=180
+    data, model_used = call_model(
+        messages,
+        TOOLS,
+        api_key=API_KEY,
+        url=URL,
+        models=MODELS,
     )
 
-    try:
-        data = response.json()
-    except Exception:
-        raise Exception(
-            f"Invalid response from OpenRouter: {response.text}"
-        )
-
-    if response.status_code != 200:
-        raise Exception(json.dumps(data, indent=2))
+    if model_used != MODELS[0]:
+        print(f"[MODEL] Primary model unavailable - answered by {model_used}")
 
     return data
 
@@ -576,7 +566,7 @@ if not API_KEY:
 
 print("=" * 64)
 print("                    OBSIDIAN AI")
-print("                    MiniMax M2.7")
+print(f"                    {MODELS[0]}")
 print("=" * 64)
 
 print("CONTROLLED CODING AGENT")
@@ -668,35 +658,9 @@ while True:
 
             if tool_calls:
 
-                for tool_call in tool_calls:
-
-                    function = tool_call["function"]
-
-                    name = function["name"]
-
-                    arguments = json.loads(
-                        function["arguments"]
-                    )
-
-                    print(
-                        f"[TOOL] {name} "
-                        f"{arguments}"
-                    )
-
-                    result = execute_tool(
-                        name,
-                        arguments
-                    )
-
-                    print(
-                        f"[RESULT] {str(result)[:500]}"
-                    )
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "content": result
-                    })
+                messages.extend(
+                    build_tool_messages(tool_calls, execute_tool)
+                )
 
                 continue
 
