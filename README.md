@@ -35,10 +35,10 @@ The agent can only touch files inside `workspace/`.
 
 ## Tests
 
-Run all of them before and after every change:
+Run all of them before and after every change. `test_ai_agent.py` drives the real tool pipeline (write file, run command, approval gates, audit log, kill switch) with no model and no internet:
 
 ```
-for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout; do python $t.py | grep RESULTS; done
+for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout test_ai_agent; do python $t.py | grep RESULTS; done
 ```
 
 ## Repo layout

@@ -580,131 +580,137 @@ def ask_model(messages):
 # MAIN AGENT LOOP
 # ============================================================
 
-if not API_KEY:
-    print("ERROR: OpenRouter API key not found.")
-    print("Set it with:  export OPENROUTER_API_KEY=your_key  then start the agent again.")
-    raise SystemExit
+def main():
+    """Start the interactive agent. Nothing runs when ai.py is merely imported."""
+    if not API_KEY:
+        print("ERROR: OpenRouter API key not found.")
+        print("Set it with:  export OPENROUTER_API_KEY=your_key  then start the agent again.")
+        raise SystemExit(1)
 
 
-print("=" * 64)
-print("                    OBSIDIAN AI")
-print(f"                    {MODELS[0]}")
-print("=" * 64)
+    print("=" * 64)
+    print("                    OBSIDIAN AI")
+    print(f"                    {MODELS[0]}")
+    print("=" * 64)
 
-print("CONTROLLED CODING AGENT")
-print()
-print(f"Workspace: {WORKSPACE}")
-print()
-print("Type 'exit' to quit.")
-print()
-
-
-messages = [
-    {
-        "role": "system",
-        "content": SYSTEM_PROMPT
-    }
-]
-
-_startup_memories = memory.startup_context()
-
-if _startup_memories:
-    messages.append({
-        "role": "system",
-        "content": (
-            "MEMORY CONTEXT — facts remembered from previous sessions:\n"
-            f"{_startup_memories}"
-        )
-    })
+    print("CONTROLLED CODING AGENT")
+    print()
+    print(f"Workspace: {WORKSPACE}")
+    print()
+    print("Type 'exit' to quit.")
+    print()
 
 
-while True:
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
 
-    if is_killed(BASE_DIR):
-        print(
-            f"\n[KILL SWITCH ACTIVE] Found {killswitch_path(BASE_DIR)} — "
-            "halting immediately. Delete that file to resume."
-        )
-        break
+    _startup_memories = memory.startup_context()
 
-    try:
-        user_input = input("You: ")
+    if _startup_memories:
+        messages.append({
+            "role": "system",
+            "content": (
+                "MEMORY CONTEXT — facts remembered from previous sessions:\n"
+                f"{_startup_memories}"
+            )
+        })
 
-    except KeyboardInterrupt:
-        print("\n\nObsidian AI shutting down.")
-        break
 
-    if not user_input.strip():
-        continue
+    while True:
 
-    if user_input.lower().strip() == "exit":
-        print("\nObsidian AI shutting down.")
-        break
-
-    messages.append({
-        "role": "user",
-        "content": user_input
-    })
-
-    SCRIPT_DENIALS.clear()  # a new message from the human = fresh start
-
-    print("\nObsidian AI is working...\n")
-
-    try:
-
-        MAX_ITERATIONS = 15
-        iteration = 0
-
-        while True:
-
-            iteration += 1
-
-            if iteration > MAX_ITERATIONS:
-                print(
-                    "\n[STOPPED] Hit the safety limit of "
-                    f"{MAX_ITERATIONS} tool-call rounds for this "
-                    "turn without a final answer. Type another "
-                    "message to continue, or 'exit' to quit."
-                )
-                break
-
-            data = ask_model(messages)
-
-            message = data["choices"][0]["message"]
-
-            messages.append(message)
-
-            # ------------------------------------------------
-            # MODEL WANTS TO USE TOOLS
-            # ------------------------------------------------
-
-            tool_calls = message.get("tool_calls")
-
-            if tool_calls:
-
-                messages.extend(
-                    build_tool_messages(tool_calls, execute_tool)
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # NORMAL RESPONSE
-            # ------------------------------------------------
-
-            answer = message.get("content", "")
-
-            print("\nObsidian AI:")
-            print(answer)
-            print()
-
+        if is_killed(BASE_DIR):
+            print(
+                f"\n[KILL SWITCH ACTIVE] Found {killswitch_path(BASE_DIR)} — "
+                "halting immediately. Delete that file to resume."
+            )
             break
 
-    except Exception as e:
+        try:
+            user_input = input("You: ")
 
-        print("\nERROR:")
-        print(e)
-        print()
+        except KeyboardInterrupt:
+            print("\n\nObsidian AI shutting down.")
+            break
 
-        if messages and messages[-1].get("role") == "user":
-            messages.pop()
+        if not user_input.strip():
+            continue
+
+        if user_input.lower().strip() == "exit":
+            print("\nObsidian AI shutting down.")
+            break
+
+        messages.append({
+            "role": "user",
+            "content": user_input
+        })
+
+        SCRIPT_DENIALS.clear()  # a new message from the human = fresh start
+
+        print("\nObsidian AI is working...\n")
+
+        try:
+
+            MAX_ITERATIONS = 15
+            iteration = 0
+
+            while True:
+
+                iteration += 1
+
+                if iteration > MAX_ITERATIONS:
+                    print(
+                        "\n[STOPPED] Hit the safety limit of "
+                        f"{MAX_ITERATIONS} tool-call rounds for this "
+                        "turn without a final answer. Type another "
+                        "message to continue, or 'exit' to quit."
+                    )
+                    break
+
+                data = ask_model(messages)
+
+                message = data["choices"][0]["message"]
+
+                messages.append(message)
+
+                # ------------------------------------------------
+                # MODEL WANTS TO USE TOOLS
+                # ------------------------------------------------
+
+                tool_calls = message.get("tool_calls")
+
+                if tool_calls:
+
+                    messages.extend(
+                        build_tool_messages(tool_calls, execute_tool)
+                    )
+
+                    continue
+
+                # ------------------------------------------------
+                # NORMAL RESPONSE
+                # ------------------------------------------------
+
+                answer = message.get("content", "")
+
+                print("\nObsidian AI:")
+                print(answer)
+                print()
+
+                break
+
+        except Exception as e:
+
+            print("\nERROR:")
+            print(e)
+            print()
+
+            if messages and messages[-1].get("role") == "user":
+                messages.pop()
+
+
+if __name__ == "__main__":
+    main()
