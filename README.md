@@ -38,8 +38,24 @@ The agent can only touch files inside `workspace/`.
 Run all of them before and after every change:
 
 ```
-for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source; do python $t.py | grep RESULTS; done
+for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout; do python $t.py | grep RESULTS; done
 ```
+
+## Repo layout
+
+| Path | What it is |
+|------|-----------|
+| `ai.py` | the agent (the only entry point) |
+| `*_gate.py`, `llm_client.py`, `web_tools.py`, `audit_log.py`, `killswitch.py`, `memory_system.py` | the layers in the table above |
+| `test_*.py` | one test file per layer; run them all (see Tests) |
+| `docs/STATUS.md` | what is done, with commits and tests |
+| `docs/BLUEPRINT.md` | the long-term plan. A plan, NOT a status report |
+| `requirements.txt` | Python packages (`pip install -r requirements.txt`) |
+| `workspace/` | the agent's sandbox. Its contents are deliberately NOT tracked by git |
+
+The old `agent_core` agent, the RainCast projects and the old status
+documents were removed in M7. They are archived outside the repo and
+remain in git history.
 
 ## Status and rules
 

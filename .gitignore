@@ -16,3 +16,7 @@ toolcall_result.txt
 *.m03-backup
 .DS_Store
 .vscode/
+
+# The agent's sandbox is NOT source code (M7). Nothing inside it is tracked.
+workspace/*
+!workspace/.gitkeep
