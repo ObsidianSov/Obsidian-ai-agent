@@ -10,6 +10,18 @@ export OPENROUTER_API_KEY="your key"      # never commit this
 python ai.py
 ```
 
+The key must be an OpenRouter key (starts with `sk-or-`). On Termux, save it
+once with this single line (the key is not shown on screen and is never
+printed by the agent). Run it alone, not as part of a bigger paste:
+
+```
+read -s -p "Paste OpenRouter key: " K; echo; echo "export OPENROUTER_API_KEY=\"$K\"" >> ~/.bashrc; unset K; source ~/.bashrc
+```
+
+The agent refuses to start if the value looks like a key for another
+service (GitHub, Anthropic, OpenAI, Google, AWS...), so a wrong secret is
+never sent to OpenRouter. Never paste a key into a chat.
+
 Optional: `OBSIDIAN_MODELS` = comma-separated list of OpenRouter model
 slugs, tried in order (fallback chain).
 

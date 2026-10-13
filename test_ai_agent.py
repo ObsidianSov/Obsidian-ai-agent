@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
+VALID_KEY = "sk-or-v1-" + "a1" * 32   # right shape, not a real key
 results = []
 
 
@@ -62,7 +63,7 @@ def run_agent(folder: Path, stdin_text="", env_extra=None, drop_key=False):
     env.pop("OPENROUTER_API_KEY", None)
     env.pop("OBSIDIAN_MODELS", None)
     if not drop_key:
-        env["OPENROUTER_API_KEY"] = "dummy-key-for-tests"
+        env["OPENROUTER_API_KEY"] = VALID_KEY
     env.update(env_extra or {})
     return subprocess.run([sys.executable, "ai.py"], cwd=folder, input=stdin_text,
                           capture_output=True, text=True, timeout=60, env=env)
@@ -97,7 +98,7 @@ def run_all_tests():
         # ---------------- starting the program ----------------
         proc = subprocess.run([sys.executable, "-c", "import ai"], cwd=folder, input="",
                               capture_output=True, text=True, timeout=60,
-                              env={**os.environ, "OPENROUTER_API_KEY": "dummy-key-for-tests"})
+                              env={**os.environ, "OPENROUTER_API_KEY": VALID_KEY})
         check(proc.returncode == 0 and proc.stdout == "", "importing ai.py starts nothing (no banner, no prompt, exit 0)")
 
         proc = run_agent(folder, drop_key=True)
@@ -114,9 +115,45 @@ def run_all_tests():
         proc = run_agent(folder, "", env_extra={"OBSIDIAN_MODELS": "model-a,model-b"})
         check("model-a" in proc.stdout, "OBSIDIAN_MODELS sets the model shown in the banner")
 
+        # ---------------- API key sanity (M7.2) ----------------
+        proc = run_agent(folder, "exit\n", {"OPENROUTER_API_KEY": VALID_KEY})
+        check(proc.returncode == 0 and "WARNING" not in proc.stdout and VALID_KEY not in proc.stdout + proc.stderr,
+              "a normal-looking OpenRouter key starts quietly and is never printed")
+
+        wrong_keys = {
+            "github_pat_" + "X" * 70: "GitHub",
+            "ghp_" + "Y" * 36: "GitHub",
+            "sk-ant-api03-" + "Z" * 40: "Anthropic",
+            "sk-proj-" + "Q" * 40: "OpenAI",
+            "sk-" + "W" * 48: "OpenAI",
+            "AIza" + "R" * 35: "Google",
+            "AKIA" + "B" * 16: "AWS",
+            "sk-or-v1-abc def": "spaces",
+        }
+        for bad_key, word in wrong_keys.items():
+            proc = run_agent(folder, "exit\n", {"OPENROUTER_API_KEY": bad_key})
+            seen = proc.stdout + proc.stderr
+            check(proc.returncode == 1 and word in seen and bad_key not in seen and "OBSIDIAN AI" not in seen,
+                  f"refuses to start with a {word}-style key, and never prints it ({bad_key[:6]}...)")
+
+        proc = run_agent(folder, "exit\n", {"OPENROUTER_API_KEY": "abc123def456"})
+        check(proc.returncode == 0 and "WARNING" in proc.stdout and "sk-or-" in proc.stdout and "abc123def456" not in proc.stdout,
+              "an unfamiliar key shape only warns (and never prints the key)")
+
+        proc = run_agent(folder, "exit\n", {"OPENROUTER_API_KEY": '"' + VALID_KEY + '"\n'})
+        check(proc.returncode == 0 and "WARNING" not in proc.stdout and "OBSIDIAN AI" in proc.stdout,
+              "quotes and a trailing newline around a pasted key are cleaned off")
+
         # ---------------- the tool pipeline ----------------
         ai = load_ai(folder)
         ws = ai.WORKSPACE
+        check(ai.clean_api_key('  "sk-or-v1-x"\n') == "sk-or-v1-x" and ai.clean_api_key(None) == "",
+              "clean_api_key trims spaces, quotes, line breaks and handles a missing value")
+        check(ai.api_key_problem(VALID_KEY) is None, "api_key_problem: OpenRouter-shaped key is fine")
+        check(ai.api_key_problem("github_pat_abc")[0] == "stop" and ai.api_key_problem("ghp_abc")[0] == "stop",
+              "api_key_problem: GitHub tokens stop")
+        check(ai.api_key_problem("something-else")[0] == "warn", "api_key_problem: unfamiliar shape only warns")
+        check("github_pat_abc" not in ai.api_key_problem("github_pat_abc")[1], "api_key_problem never repeats the key")
         check(Path(ws).resolve() == (folder / "workspace").resolve(), "tests run in the throwaway folder, not your real workspace")
 
         out = tool(ai, "write_file", {"path": "note.txt", "content": "hello"})

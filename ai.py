@@ -16,7 +16,44 @@ from llm_client import call_model, models_from_env, build_tool_messages
 # OBSIDIAN AI — CONTROLLED CODING AGENT
 # ============================================================
 
-API_KEY = os.getenv("OPENROUTER_API_KEY")
+def clean_api_key(raw):
+    """Trim spaces, line breaks and quotes that sneak in when a key is pasted."""
+    return (raw or "").strip().strip("\"'").strip()
+
+
+API_KEY = clean_api_key(os.getenv("OPENROUTER_API_KEY"))
+
+# Keys that belong to OTHER services. If one of these ends up in
+# OPENROUTER_API_KEY the agent refuses to start, so it is never sent to
+# OpenRouter's servers.
+WRONG_KEY_PREFIXES = (
+    ("github_pat_", "a GitHub token"), ("ghp_", "a GitHub token"),
+    ("gho_", "a GitHub token"), ("ghu_", "a GitHub token"),
+    ("ghs_", "a GitHub token"), ("ghr_", "a GitHub token"),
+    ("sk-ant-", "an Anthropic key"), ("sk-proj-", "an OpenAI key"),
+    ("AIza", "a Google key"), ("AKIA", "an AWS key"),
+    ("xoxb-", "a Slack token"), ("xoxp-", "a Slack token"),
+)
+
+
+def api_key_problem(key):
+    """
+    Check the key's shape without ever repeating it.
+    Returns None (fine), ("warn", text) or ("stop", text).
+    """
+    if any(ch.isspace() for ch in key):
+        return ("stop", "the key contains spaces or line breaks, so it was pasted wrongly.")
+    for prefix, what in WRONG_KEY_PREFIXES:
+        if key.startswith(prefix):
+            return ("stop", f"that looks like {what}, not an OpenRouter key. "
+                            "It was NOT sent anywhere. If it was pasted in a chat or "
+                            "shared, revoke it.")
+    if key.startswith("sk-") and not key.startswith("sk-or-"):
+        return ("stop", "that looks like an OpenAI-style key, not an OpenRouter key. It was NOT sent anywhere.")
+    if not key.startswith("sk-or-"):
+        return ("warn", "OpenRouter keys normally start with sk-or- . Continuing, "
+                        "but if you get HTTP 401, check the key.")
+    return None
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MODEL = "minimax/minimax-m2.7"
@@ -587,6 +624,15 @@ def main():
         print("Set it with:  export OPENROUTER_API_KEY=your_key  then start the agent again.")
         raise SystemExit(1)
 
+    problem = api_key_problem(API_KEY)
+    if problem:
+        level, text = problem
+        if level == "stop":
+            print(f"ERROR: {text}")
+            print("Set the right key with:  export OPENROUTER_API_KEY=your_key  then start the agent again.")
+            raise SystemExit(1)
+        print(f"WARNING: {text}")
+        print()
 
     print("=" * 64)
     print("                    OBSIDIAN AI")
