@@ -90,6 +90,13 @@ def run_all_tests():
         ("python < a.py", ["a.py"]),
         ("python -m mymod", ["mymod"]),
         ("python $FILE", ["$FILE"]),
+        ("python script.py 2>&1", ["script.py"]),
+        ("python script.py > out.txt", ["script.py"]),
+        ("python 2>/dev/null script.py", ["script.py"]),
+        ("python -W ignore script.py 2>/dev/null", ["script.py"]),
+        ("bash run.sh &> log.txt", ["run.sh"]),
+        ("node app.js >> log", ["app.js"]),
+        ("python -v script.py", ["script.py"]),
     ]
     for cmd, expected in parse_cases:
         got = files_of(cmd)
@@ -97,7 +104,10 @@ def run_all_tests():
 
     for cmd in ["ls -la", "git status", "pip install requests", "echo hi",
                 "python --version", "python", 'echo "python evil.py"',
-                "cat a.py", "grep python notes.txt", "pip install python-dateutil"]:
+                "cat a.py", "grep python notes.txt", "pip install python-dateutil",
+                # the exact command that wrongly triggered a prompt on the phone:
+                "python --version && pip --version && node --version 2>/dev/null; npm --version 2>/dev/null",
+                "python3 -V", "node -v", "python --help", "bash --version"]:
         t, n = extract_script_targets(cmd)
         check(t == [] and n == [], f"no script found in {cmd!r}")
 
@@ -273,6 +283,17 @@ def run_all_tests():
         (ws / "sub" / "a.py").write_text("print('different')\n")
         a3, _ = fingerprint_script(ws / "sub" / "a.py")
         check(a1 == a2 and a1 != a3, "fingerprint is stable, and changes when content changes")
+
+    # ---------------- the false alarm seen on the phone ----------------
+    with tempfile.TemporaryDirectory() as tmp5:
+        ws5 = Path(tmp5).resolve()
+        ask = Asker()
+        res = review_command(
+            "python --version && pip --version && node --version 2>/dev/null; npm --version 2>/dev/null",
+            ws5, set(), ask=ask, out=quiet)
+        check(res is None and ask.calls == 0, "version checks with 2>/dev/null no longer ask 'Run this script?'")
+    check("ask or ask_human" in Path(__file__).with_name("script_gate.py").read_text(encoding="utf-8"),
+          "script gate prompts through ask_human (fresh answers only)")
 
     # ---------------- wiring into ai.py (source check) ----------------
     src = Path(__file__).with_name("ai.py").read_text(encoding="utf-8")

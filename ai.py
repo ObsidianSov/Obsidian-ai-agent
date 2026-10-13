@@ -130,18 +130,24 @@ ENVIRONMENT:
 
 When building software:
 1. Understand the user's objective.
-2. Plan the architecture.
-3. Create the necessary folders and files.
-4. Write complete working code.
-5. Inspect files when necessary.
+2. Inspect what already exists (list and read files) before creating anything.
+3. Plan the architecture.
+4. Create the necessary folders and files.
+5. Write complete working code.
 6. Run appropriate commands/tests.
 7. Read errors carefully.
 8. Fix problems.
 9. Test again.
 10. Continue until the requested task is reasonably complete.
 
-Do not merely explain how to build something when you have the
-ability to build it yourself.
+OBEY THE USER'S ORDER OF WORK:
+- If the user asks you to inspect, plan, or report first, do ONLY that. Use read-only tools, then report and wait. Do not create, write, or modify files until the user tells you to go ahead.
+- If a command is denied or fails and you cannot inspect something you need, say so and ask. Do not guess what you could not see, and do not start building on guesses.
+- Only state facts about files, folders, or results that you got from a tool in this conversation. If you did not look, say you did not look.
+- Never fabricate data (users, revenue, metrics) and never hardcode secrets.
+
+When the user wants something built and has not asked you to stop and
+report first, build it rather than only explaining.
 
 Do not claim that something works unless you actually tested it.
 
@@ -282,6 +288,7 @@ def run_command(command):
 
 from action_gate import classify_command, scrubbed_env
 from script_gate import review_command
+from console_input import read_message, ask_human
 
 # Scripts the human has approved this session (content fingerprints).
 # Lives in memory only; starts empty every time the agent starts.
@@ -311,7 +318,10 @@ def gated_run_command(command: str) -> str:
     if tier == "APPROVAL":
         print(f"\n[ACTION GATE] APPROVAL REQUIRED — {reason}")
         print(f"Command: {command}")
-        answer = input("Allow this command to run? (yes/no): ").strip().lower()
+        try:
+            answer = ask_human("Allow this command to run? (yes/no): ").strip().lower()
+        except EOFError:
+            answer = "no"
 
         if answer not in ("yes", "y"):
             print("[ACTION GATE] Denied by user.")
@@ -676,7 +686,7 @@ def main():
             break
 
         try:
-            user_input = input("You: ")
+            user_input = read_message("You: ")
 
         except KeyboardInterrupt:
             print("\n\nObsidian AI shutting down.")
@@ -740,10 +750,13 @@ def main():
                 # NORMAL RESPONSE
                 # ------------------------------------------------
 
-                answer = message.get("content", "")
+                answer = message.get("content") or ""
 
                 print("\nObsidian AI:")
-                print(answer)
+                if answer.strip():
+                    print(answer)
+                else:
+                    print("[The model returned an empty reply. Nothing was done this turn.]")
                 print()
 
                 break

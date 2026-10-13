@@ -39,6 +39,7 @@ Every tool call passes through safety layers:
 | Action Gate | `action_gate.py` | commands are ALLOW / APPROVAL / BLOCK; secrets are stripped from the command environment |
 | Script gate | `script_gate.py` | scripts the agent runs (`python x.py`, `bash x.sh`, `node x.js`) need your approval; the prompt shows the code; approval is remembered for the session only for that exact content |
 | Web safety | `web_tools.py` | `fetch_url` refuses internal/private addresses, re-checks every redirect |
+| Console input | `console_input.py` | a pasted multi-line message arrives as ONE message; approval prompts throw away leftover pasted text so only a fresh answer can approve |
 | Audit log | `audit_log.py` | every tool call recorded as JSON lines |
 | Model client | `llm_client.py` | retry, backoff, fallback to the next model (including on out-of-credits) |
 | Memory | `memory_system.py` | remember / recall across sessions |
@@ -50,7 +51,7 @@ The agent can only touch files inside `workspace/`.
 Run all of them before and after every change. `test_ai_agent.py` drives the real tool pipeline (write file, run command, approval gates, audit log, kill switch) with no model and no internet:
 
 ```
-for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout test_ai_agent; do python $t.py | grep RESULTS; done
+for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout test_ai_agent test_console_input; do python $t.py | grep RESULTS; done
 ```
 
 ## Repo layout

@@ -38,6 +38,8 @@ import re
 import shlex
 from pathlib import Path
 
+from console_input import ask_human
+
 INTERPRETER_RE = re.compile(
     r"^(python[0-9.]*|py|pypy3?|node|nodejs|deno|bun|bash|sh|zsh|dash|ksh|"
     r"perl|ruby|php|lua|rscript)$"
@@ -48,6 +50,11 @@ WRAPPERS = {"sudo", "time", "nohup", "exec", "command", "env", "nice",
 EXEC_FLAGS = {"-exec", "-execdir", "-ok", "-okdir"}
 INLINE_FLAGS = {"-c", "-e", "-p"}
 VALUE_FLAGS = {"-W", "-X", "-o", "-O", "-r", "-I", "--require"}
+# Asking an interpreter for its version/help runs no script.
+INFO_FLAGS = {"--version", "--help"}
+PYTHON_INFO_FLAGS = {"-V", "-VV"}
+NODE_INFO_FLAGS = {"-v"}
+REDIRECT_RE = re.compile(r"^(\d*|&)(>>?|>&)(\S*)$")   # 2>/dev/null  >out.txt  2>&1  &>log
 CD_COMMANDS = {"cd", "pushd", "popd"}
 
 ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -109,6 +116,17 @@ def _parse_interpreter_args(base, tokens, j, found, notes, depth):
         a = tokens[j]
         if a == "--":
             j += 1
+            continue
+        if a in INFO_FLAGS:
+            return len(tokens)
+        if base.startswith(("python", "py")) and a in PYTHON_INFO_FLAGS:
+            return len(tokens)
+        if base in ("node", "nodejs", "deno", "bun") and a in NODE_INFO_FLAGS:
+            return len(tokens)
+        redirect = REDIRECT_RE.match(a)
+        if redirect:
+            # `2>/dev/null` carries its own target; a bare `>` takes the next word as the target
+            j += 1 if redirect.group(3) else 2
             continue
         if a == "-m" and j + 1 < len(tokens):
             found.append(("module", tokens[j + 1]))
@@ -361,7 +379,7 @@ def review_command(command: str, workspace, approved: set, ask=None, out=print, 
     model tends to retry a denied command); the caller clears the set
     when the human sends a new message.
     """
-    ask = ask or input   # looked up now (not at import) so tests can replace input()
+    ask = ask or ask_human   # fresh-answer-only prompt; tests pass their own `ask`
     if denied is None:
         denied = set()
     for item in find_scripts_needing_approval(command, workspace, approved):
