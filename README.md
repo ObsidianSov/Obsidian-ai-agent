@@ -38,7 +38,7 @@ The agent can only touch files inside `workspace/`.
 Run all of them before and after every change:
 
 ```
-for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate; do python $t.py | grep RESULTS; done
+for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source; do python $t.py | grep RESULTS; done
 ```
 
 ## Status and rules

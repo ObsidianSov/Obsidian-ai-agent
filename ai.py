@@ -86,10 +86,10 @@ decision, or fact worth keeping across sessions. Use "recall_memory"
 when a past fact would help you answer the current request.
 
 ENVIRONMENT:
-- Windows
-- Python is launched with "py", not "python".
+- An Android phone running Termux (a Linux-style shell). NOT Windows.
+- Python is launched with "python" (the Windows "py" launcher does not exist here).
 - The working directory is the Obsidian workspace.
-- Prefer commands that work in Windows CMD.
+- Use POSIX shell commands (ls, cat, mkdir -p, cp, mv). Do not use Windows CMD or PowerShell commands.
 
 When building software:
 1. Understand the user's objective.
@@ -582,7 +582,7 @@ def ask_model(messages):
 
 if not API_KEY:
     print("ERROR: OpenRouter API key not found.")
-    print("Close and reopen Command Prompt, then try again.")
+    print("Set it with:  export OPENROUTER_API_KEY=your_key  then start the agent again.")
     raise SystemExit
 
 

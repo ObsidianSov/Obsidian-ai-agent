@@ -13,7 +13,8 @@ visible output and (2) a pushed git commit. Claims alone do not count.
 | M3 | Secrets scrubbed from command env; risky-command patterns in Action Gate | c1d90e5 | test_gate_hardening (54) |
 | M4 | Out-of-credits (402) falls through to the next model | 083b6ab | test_llm_client (32) |
 | M5 | `fetch_url` SSRF hardening: all IP spellings, IPv6-wrapped IPv4, CGNAT, unique-local, metadata hosts, DNS check, per-hop redirect check | 042ddfa | test_web_tools (89) |
-| M6 | `script_gate.py`: scripts the agent runs need human approval (code shown); remembered per session for the exact content incl. same-folder files; wired into `gated_run_command`; a "no" sticks for the rest of that request so the model can't loop on it | (fill in after push) | test_script_gate (107) |
+| M6 | `script_gate.py`: scripts the agent runs need human approval (code shown); remembered per session for the exact content incl. same-folder files; wired into `gated_run_command`; a "no" sticks for the rest of that request so the model can't loop on it | 3c02784 | test_script_gate (107) |
+| M6.1 | `ai.py` system prompt and missing-key message no longer assume Windows (`py`, CMD); they say Termux/`python`/POSIX | (fill in after push) | test_ai_source (9) |
 
 Older suites still passing: test_action_gate (34), test_audit_log (6), test_killswitch (7), test_llm_client (32), test_gate_hardening (54).
 
