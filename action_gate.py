@@ -10,11 +10,12 @@ command, or one that reaches outside its workspace, by mistake or
 under a confused instruction. It is not a security boundary against
 a malicious actor with full control of the input.
 
-Known gap (by design, for now): a Python/shell script that the agent
-writes itself and then runs is not inspected line by line. To limit the
-damage, run_command() starts every command with scrubbed_env() so API
-keys and tokens are simply not present in the child process. A real
-sandbox is a later milestone.
+Scripts the agent writes itself and then runs are handled by
+script_gate.py (M6): the human approves the script's content before it
+runs. That gate has its own documented limits. As a second layer,
+run_command() starts every command with scrubbed_env() so API keys and
+tokens are simply not present in the child process. A real sandbox is a
+later milestone.
 
 Pure functions only, no I/O — safe to import for testing without
 triggering any side effects.

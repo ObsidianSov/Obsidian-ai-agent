@@ -244,6 +244,14 @@ def run_command(command):
 # and input() and so can't live in the side-effect-free module.
 
 from action_gate import classify_command, scrubbed_env
+from script_gate import review_command
+
+# Scripts the human has approved this session (content fingerprints).
+# Lives in memory only; starts empty every time the agent starts.
+SCRIPT_APPROVALS = set()
+# Scripts the human said NO to during the current request. Cleared every
+# time the human types a new message, so a 'no' is not asked twice in a row.
+SCRIPT_DENIALS = set()
 
 
 def gated_run_command(command: str) -> str:
@@ -270,9 +278,22 @@ def gated_run_command(command: str) -> str:
 
         if answer not in ("yes", "y"):
             print("[ACTION GATE] Denied by user.")
-            return "DENIED: User did not approve this command. It was not executed."
+            return (
+                "DENIED: The user refused this command. It was NOT executed. "
+                "Do not retry it or work around it. Stop, tell the user it "
+                "was denied, and ask what they want to do instead."
+            )
 
         print("[ACTION GATE] Approved by user.")
+
+    # Script gate (M6): if this command runs a script file, the human
+    # must approve that script's content first.
+    script_denial = review_command(
+        command, WORKSPACE, SCRIPT_APPROVALS, denied=SCRIPT_DENIALS
+    )
+    if script_denial:
+        print("\n[SCRIPT GATE] Command not executed.")
+        return script_denial
 
     return run_command(command)
 
@@ -624,6 +645,8 @@ while True:
         "role": "user",
         "content": user_input
     })
+
+    SCRIPT_DENIALS.clear()  # a new message from the human = fresh start
 
     print("\nObsidian AI is working...\n")
 
