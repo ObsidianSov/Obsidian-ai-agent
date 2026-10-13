@@ -1,59 +1,169 @@
 """
 Web fetch capability for Obsidian AI (ai.py)
 
-Gives the agent the ability to fetch and read a real URL — the
-capability that was missing today and forced every external fact
-to be verified by a human instead of the agent itself.
-
+Gives the agent the ability to fetch and read a real URL.
 This is NOT a search engine — it can only read a URL it's given,
-not discover one. A separate decision is needed on search (API key
-vs. scraping tradeoffs), deliberately not made here.
+not discover one (web_search below does discovery).
 
-Includes basic SSRF protection: refuses to fetch internal/private
-network addresses, so the agent can't be tricked into probing the
-local machine or network under the guise of "fetch this URL".
+SSRF protection (M5): the agent must not be tricked into reading
+internal/private network addresses. The check:
+  - allows only http/https, rejects credentials, backslashes,
+    whitespace/control characters and non-ASCII hostnames
+  - understands every IP spelling: decimal (2130706433), hex
+    (0x7f000001), octal (0177.0.0.1), short (127.1), IPv6, and
+    IPv4 hidden inside IPv6 (::ffff:127.0.0.1, 64:ff9b::, 6to4)
+  - blocks private, loopback, link-local, CGNAT (100.64/10),
+    IPv6 unique-local (fc00::/7, incl. fd00::/8), multicast and
+    reserved ranges
+  - blocks known internal/metadata hostnames
+  - resolves DNS names and blocks if ANY resulting address is internal
+  - follows redirects manually and re-checks EVERY hop
+
+Known remaining limit: DNS rebinding. We validate the DNS answer,
+then requests resolves the name again when it connects. A hostile
+DNS server could answer differently the second time. Closing this
+needs connecting to the validated IP directly; not done here.
 """
 
+import ipaddress
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
-PRIVATE_HOST_PATTERNS = [
-    r"^localhost$",
-    r"^127\.",
-    r"^0\.0\.0\.0$",
-    r"^10\.",
-    r"^192\.168\.",
-    r"^172\.(1[6-9]|2\d|3[01])\.",
-    r"^169\.254\.",   # link-local
-    r"^::1$",
+MAX_REDIRECTS = 5
+REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata",
+    "metadata.google.internal",
+    "instance-data",
+    "instance-data.ec2.internal",
+    "kubernetes.default",
+    "kubernetes.default.svc",
+}
+BLOCKED_SUFFIXES = (
+    ".localhost", ".local", ".internal", ".localdomain",
+    ".lan", ".home.arpa", ".intranet", ".corp",
+)
+
+# Belt and braces on top of ipaddress's is_global (its answers have
+# changed between Python versions).
+_EXTRA_BLOCKED_NETWORKS = [
+    ipaddress.ip_network(n) for n in (
+        "0.0.0.0/8",       # "this network" (0.0.0.0, "0")
+        "100.64.0.0/10",   # carrier-grade NAT
+        "127.0.0.0/8",     # loopback
+        "169.254.0.0/16",  # link-local + cloud metadata
+        "198.18.0.0/15",   # benchmarking
+        "224.0.0.0/4",     # multicast
+        "240.0.0.0/4",     # reserved
+        "::/8",            # unspecified, loopback, IPv4-compatible
+        "fc00::/7",        # unique-local (includes fd00::/8)
+        "fe80::/10",       # link-local
+        "ff00::/8",        # multicast
+    )
 ]
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_6TO4 = ipaddress.ip_network("2002::/16")
+_HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$")
+_BAD_URL_CHARS = re.compile(r"[\s\\\x00-\x1f\x7f]")
 
 
-def is_safe_url(url: str):
+def _ip_is_blocked(ip) -> bool:
+    """True if this IP address must never be fetched."""
+    if isinstance(ip, ipaddress.IPv6Address):
+        # IPv4 hidden inside IPv6: judge the embedded IPv4 address
+        if ip.ipv4_mapped is not None:
+            return _ip_is_blocked(ip.ipv4_mapped)
+        if ip in _NAT64:
+            return _ip_is_blocked(ipaddress.IPv4Address(ip.packed[-4:]))
+        if ip in _6TO4:
+            return _ip_is_blocked(ipaddress.IPv4Address(ip.packed[2:6]))
+    if any(ip in net for net in _EXTRA_BLOCKED_NETWORKS):
+        return True
+    return not ip.is_global
+
+
+def _parse_ip_literal(host: str):
+    """Return an IP address object if host is ANY spelling of an IP
+    address, else None."""
+    try:
+        return ipaddress.ip_address(host)   # IPv6, plain IPv4
+    except ValueError:
+        pass
+    if not _HOSTNAME_RE.match(host):
+        return None
+    try:
+        # Legacy IPv4 spellings: 2130706433, 0x7f000001, 0177.0.0.1, 127.1
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
+
+
+def _default_resolver(host: str, port: int):
+    infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    return [ipaddress.ip_address(i[4][0].split("%")[0]) for i in infos]
+
+
+def _check_host(host: str, port: int, resolver):
+    host = host.rstrip(".").lower()
+    if not host:
+        return False, "Empty hostname"
+    if not host.isascii():
+        return False, "Non-ASCII hostnames are not allowed"
+
+    ip = _parse_ip_literal(host)
+    if ip is not None:
+        if _ip_is_blocked(ip):
+            return False, f"Refusing to fetch internal/private address: {host} ({ip})"
+        return True, None
+
+    if not _HOSTNAME_RE.match(host):
+        return False, f"Invalid hostname: {host}"
+    if host in BLOCKED_HOSTNAMES or host.endswith(BLOCKED_SUFFIXES):
+        return False, f"Refusing to fetch internal hostname: {host}"
+
+    try:
+        ips = resolver(host, port)
+    except (OSError, ValueError) as e:
+        return False, f"Could not resolve {host}: {e}"
+    if not ips:
+        return False, f"Could not resolve {host}"
+    for resolved in ips:
+        if _ip_is_blocked(resolved):
+            return False, f"{host} resolves to internal/private address {resolved}"
+    return True, None
+
+
+def is_safe_url(url: str, resolver=None):
     """
     Returns (is_safe: bool, reason: str or None).
-    Blocks non-http(s) schemes and obviously internal/private hosts.
-    This is a heuristic check, not a guarantee — DNS rebinding and
-    similar advanced tricks are out of scope for this simple check.
+    `resolver` is for tests only: a function (host, port) -> list of
+    IP address objects. Real use leaves it None (real DNS).
     """
+    resolver = resolver or _default_resolver
+
+    if _BAD_URL_CHARS.search(url):
+        return False, "URL contains whitespace, control or backslash characters"
+
     try:
         parsed = urlparse(url)
-    except Exception:
+        port = parsed.port
+    except ValueError:
         return False, "Could not parse URL"
 
     if parsed.scheme not in ("http", "https"):
         return False, f"Unsupported scheme: {parsed.scheme}"
+    if "@" in parsed.netloc:
+        return False, "Credentials in URL are not allowed"
 
-    hostname = parsed.hostname or ""
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
 
-    for pattern in PRIVATE_HOST_PATTERNS:
-        if re.match(pattern, hostname):
-            return False, f"Refusing to fetch internal/private address: {hostname}"
-
-    return True, None
+    return _check_host(parsed.hostname or "", port, resolver)
 
 
 def extract_text_from_html(html: str) -> str:
@@ -69,26 +179,45 @@ def extract_text_from_html(html: str) -> str:
     return text
 
 
-def fetch_url(url: str, max_chars: int = 3000) -> str:
+def fetch_url(url: str, max_chars: int = 3000, _get=None, _resolver=None) -> str:
     """
     Fetch a URL and return readable text content, truncated to
     max_chars. Returns a clear error string on failure rather than
     raising, since this is called from the agent's tool loop.
+    Redirects are followed by hand so every hop is safety-checked.
+    (_get and _resolver exist only so tests can run without a network.)
     """
-    safe, reason = is_safe_url(url)
-    if not safe:
-        return f"BLOCKED: {reason}"
+    get = _get or requests.get
+    current = url
 
-    try:
-        response = requests.get(
-            url,
-            timeout=10,
-            headers={"User-Agent": "ObsidianAI/1.0 (personal coding agent)"}
-        )
-    except requests.exceptions.Timeout:
-        return f"Error: request to {url} timed out after 10 seconds"
-    except requests.exceptions.RequestException as e:
-        return f"Error fetching {url}: {e}"
+    for hop in range(MAX_REDIRECTS + 1):
+        safe, reason = is_safe_url(current, _resolver)
+        if not safe:
+            if hop == 0:
+                return f"BLOCKED: {reason}"
+            return f"BLOCKED: redirect to {current} refused: {reason}"
+
+        try:
+            response = get(
+                current,
+                timeout=10,
+                headers={"User-Agent": "ObsidianAI/1.0 (personal coding agent)"},
+                allow_redirects=False,
+            )
+        except requests.exceptions.Timeout:
+            return f"Error: request to {current} timed out after 10 seconds"
+        except requests.exceptions.RequestException as e:
+            return f"Error fetching {current}: {e}"
+
+        if response.status_code in REDIRECT_CODES:
+            location = response.headers.get("Location")
+            if not location:
+                return f"Error: {current} redirected without a Location header"
+            current = urljoin(current, location)
+            continue
+        break
+    else:
+        return f"Error: too many redirects (more than {MAX_REDIRECTS})"
 
     content_type = response.headers.get("Content-Type", "")
 
