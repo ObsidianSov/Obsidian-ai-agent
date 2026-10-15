@@ -146,8 +146,15 @@ OBEY THE USER'S ORDER OF WORK:
 - Only state facts about files, folders, or results that you got from a tool in this conversation. If you did not look, say you did not look.
 - Never fabricate data (users, revenue, metrics) and never hardcode secrets.
 
+TASK PHASES (enforced by the program, not just a request):
+- Every request starts in the INSPECT phase. In INSPECT you may only use read-only tools (list_files, read_file, fetch_url, web_search, recall_memory, remember) and simple read-only commands (ls, cat, head, tail, grep, wc, find without -delete or -exec, git status/log/diff, version checks).
+- write_file, create_directory and every other command are LOCKED until the human approves a plan. When you have looked at what exists, call submit_plan with a short summary, your steps, and the files you expect to create or change. The human answers yes or no.
+- If the human rejects the plan, do not write or run anything. Read their feedback, then revise the plan or stop and ask.
+- If the request needs no changes (a question, an explanation, a report), just answer in text. No plan is needed.
+- If the human starts a message with /do, plan approval is skipped for that request and you may act right away.
+
 When the user wants something built and has not asked you to stop and
-report first, build it rather than only explaining.
+report first, inspect, submit your plan, and then build it rather than only explaining.
 
 Do not claim that something works unless you actually tested it.
 
@@ -289,6 +296,7 @@ def run_command(command):
 from action_gate import classify_command, scrubbed_env
 from script_gate import review_command
 from console_input import read_message, ask_human
+from task_engine import TaskState, parse_do_prefix
 
 # Scripts the human has approved this session (content fingerprints).
 # Lives in memory only; starts empty every time the agent starts.
@@ -296,6 +304,10 @@ SCRIPT_APPROVALS = set()
 # Scripts the human said NO to during the current request. Cleared every
 # time the human types a new message, so a 'no' is not asked twice in a row.
 SCRIPT_DENIALS = set()
+
+# Task Engine (M8): every request starts in the INSPECT phase (read-only
+# tools only) until the human approves a plan. Reset on every new message.
+TASK = TaskState()
 
 
 def gated_run_command(command: str) -> str:
@@ -519,6 +531,34 @@ TOOLS = [
                 "required": ["query"]
             }
         }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "submit_plan",
+            "description": "Show the human your plan and ask for approval. Until the human approves, write_file, create_directory and commands other than simple read-only ones are locked. Call this after you have inspected what exists and before you change anything.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "One short sentence: what you are going to do."
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "The steps you will take, in order (at most 15)."
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Files you expect to create or change."
+                    }
+                },
+                "required": ["summary", "steps"]
+            }
+        }
     }
 ]
 
@@ -540,6 +580,13 @@ def execute_tool(name, arguments):
         )
         audit.record(tool_name=name, arguments=arguments, success=False, output=output, tier="KILLED")
         return output
+
+    # Task Engine: in the INSPECT phase only read-only tools may run.
+    locked = TASK.check_tool(name, arguments)
+    if locked:
+        print(f"\n[TASK ENGINE] LOCKED - {name} is not allowed until a plan is approved.")
+        audit.record(tool_name=name, arguments=arguments, success=False, output=locked, tier="LOCKED")
+        return locked
 
     try:
 
@@ -583,6 +630,12 @@ def execute_tool(name, arguments):
 
         elif name == "recall_memory":
             output = memory.recall(arguments["query"])
+
+        elif name == "submit_plan":
+            tier = "PLAN"
+            output = TASK.submit_plan(arguments, ask_human)
+            if not output.startswith("PLAN APPROVED") and not output.startswith("No plan needed"):
+                success = False
 
         else:
             output = f"Unknown tool: {name}"
@@ -698,6 +751,15 @@ def main():
         if user_input.lower().strip() == "exit":
             print("\nObsidian AI shutting down.")
             break
+
+        user_input, skip_plan = parse_do_prefix(user_input)
+        if skip_plan and not user_input.strip():
+            print("Usage: /do <what you want done>   (skips the plan step for that one request)")
+            continue
+
+        TASK.reset(start_in_act=skip_plan)
+        if skip_plan:
+            print("[TASK ENGINE] /do - plan step skipped for this request.")
 
         messages.append({
             "role": "user",

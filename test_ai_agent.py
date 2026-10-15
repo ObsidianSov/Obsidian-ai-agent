@@ -75,6 +75,9 @@ def load_ai(folder: Path):
     module = importlib.util.module_from_spec(spec)
     os.environ["OPENROUTER_API_KEY"] = "SECRET-VALUE-123"
     spec.loader.exec_module(module)
+    # These tests check the safety gates AFTER a plan is approved (the Task Engine
+    # starts every request locked). test_task_engine.py tests the lock itself.
+    module.TASK.reset(start_in_act=True)
     return module
 
 
