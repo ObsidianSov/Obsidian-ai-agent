@@ -372,6 +372,7 @@ def part3_real_loop(folder):
         calls(tool_call("c1", "write_file", {"path": "notes.txt", "content": "v1"})),
         calls(tool_call("c2", "submit_plan", GOOD_PLAN)),
         calls(tool_call("c3", "write_file", {"path": "notes.txt", "content": "v1"})),
+        calls(tool_call("c4", "read_file", {"path": "notes.txt"})),   # M9: check before saying done
         says("done"),
     ], human)
     check(model.tool_results(1)[0].startswith("LOCKED"), "loop: the model's first write attempt is LOCKED")
@@ -387,6 +388,7 @@ def part3_real_loop(folder):
     human = Human()
     model, printed = run_main(ai, ["/do make a file", "exit"], [
         calls(tool_call("c1", "write_file", {"path": "quick.txt", "content": "fast"})),
+        calls(tool_call("c2", "read_file", {"path": "quick.txt"})),   # M9: check before saying done
         says("made it"),
     ], human)
     user_msgs = [m["content"] for m in model.seen[0] if m.get("role") == "user"]
@@ -433,6 +435,7 @@ def part3_real_loop(folder):
         calls(tool_call("c1", "submit_plan", GOOD_PLAN)),
         calls(tool_call("c2", "submit_plan", {**GOOD_PLAN, "summary": "Shorter notes file"})),
         calls(tool_call("c3", "write_file", {"path": "notes.txt", "content": "short"})),
+        calls(tool_call("c4", "read_file", {"path": "notes.txt"})),   # M9: check before saying done
         says("done"),
     ], human)
     check("use a shorter file" in model.tool_results(1)[0] and model.tool_results(1)[0].startswith("PLAN NOT APPROVED"),
@@ -454,6 +457,7 @@ def part3_real_loop(folder):
         calls(tool_call("c1", "list_files", {"path": "."}), tool_call("c2", "read_file", {"path": "old.txt"})),
         calls(tool_call("c3", "submit_plan", {"summary": "Extend old.txt", "steps": ["Append a line"], "files": ["old.txt"]})),
         calls(tool_call("c4", "write_file", {"path": "old.txt", "content": "legacy+new"})),
+        calls(tool_call("c5", "read_file", {"path": "old.txt"})),   # M9: check before saying done
         says("extended"),
     ], human)
     check("old.txt" in model.tool_results(1)[0] and model.tool_results(1)[1] == "legacy" and "LOCKED" not in "".join(model.tool_results(1)),

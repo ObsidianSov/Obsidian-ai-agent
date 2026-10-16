@@ -158,6 +158,11 @@ report first, inspect, submit your plan, and then build it rather than only expl
 
 Do not claim that something works unless you actually tested it.
 
+VERIFY BEFORE YOU SAY DONE (enforced by the program):
+- After you write a file, check it before your final answer. Code files (.py .js .sh): run or test them with a command that exits 0, such as `python file.py` or `python -m py_compile file.py`. Other files: call read_file on them and confirm the content.
+- If you give a final answer while a written file has no passing check after its last write, the program sends you back to check. After two tries it shows the human a NOT VERIFIED notice.
+- If a check fails, fix the file and check it again. If you cannot check something, say so plainly. Never say it works without a passing check.
+
 Keep responses concise while working.
 """
 
@@ -297,6 +302,7 @@ from action_gate import classify_command, scrubbed_env
 from script_gate import review_command
 from console_input import read_message, ask_human
 from task_engine import TaskState, parse_do_prefix
+from verify import VerifyState
 
 # Scripts the human has approved this session (content fingerprints).
 # Lives in memory only; starts empty every time the agent starts.
@@ -308,6 +314,10 @@ SCRIPT_DENIALS = set()
 # Task Engine (M8): every request starts in the INSPECT phase (read-only
 # tools only) until the human approves a plan. Reset on every new message.
 TASK = TaskState()
+
+# Verify step (M9): the program remembers which files the agent wrote and
+# whether a passing check ran after the last write. Reset on every new message.
+VERIFY = VerifyState()
 
 
 def gated_run_command(command: str) -> str:
@@ -645,6 +655,8 @@ def execute_tool(name, arguments):
         output = f"Tool error: {e}"
         success = False
 
+    VERIFY.note_tool(name, arguments, output)
+
     audit.record(
         tool_name=name,
         arguments=arguments,
@@ -679,6 +691,15 @@ def ask_model(messages):
 # ============================================================
 # MAIN AGENT LOOP
 # ============================================================
+
+def show_verify_report():
+    """Print the program-written verify result (nothing if no files were written)."""
+    ok, text = VERIFY.report()
+    if text:
+        print(text)
+        print()
+        audit.record(tool_name="verify", arguments={"files": sorted(VERIFY.files)}, success=ok, output=text, tier="VERIFY")
+
 
 def main():
     """Start the interactive agent. Nothing runs when ai.py is merely imported."""
@@ -758,6 +779,7 @@ def main():
             continue
 
         TASK.reset(start_in_act=skip_plan)
+        VERIFY.reset()
         if skip_plan:
             print("[TASK ENGINE] /do - plan step skipped for this request.")
 
@@ -786,6 +808,7 @@ def main():
                         "turn without a final answer. Type another "
                         "message to continue, or 'exit' to quit."
                     )
+                    show_verify_report()
                     break
 
                 data = ask_model(messages)
@@ -814,12 +837,22 @@ def main():
 
                 answer = message.get("content") or ""
 
+                # Verify step (M9): files were written but no passing check ran
+                # after the last write -> hold this answer back, send the model to check.
+                bounce = VERIFY.check_final(answer)
+                if bounce:
+                    print("\n[VERIFY] Files were changed but not checked yet - sending the agent back to check them.")
+                    audit.record(tool_name="verify", arguments={"files": sorted(VERIFY.pending())}, success=False, output=bounce, tier="VERIFY")
+                    messages.append({"role": "user", "content": bounce})
+                    continue
+
                 print("\nObsidian AI:")
                 if answer.strip():
                     print(answer)
                 else:
                     print("[The model returned an empty reply. Nothing was done this turn.]")
                 print()
+                show_verify_report()
 
                 break
 

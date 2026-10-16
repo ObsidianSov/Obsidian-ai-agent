@@ -38,6 +38,7 @@ Every tool call passes through safety layers:
 |-------|------|-----|
 | Kill switch | `killswitch.py` | emergency stop, checked first |
 | Task Engine | `task_engine.py` | every request starts in INSPECT: only read-only tools and read-only commands (`ls`, `cat`, `grep`, `git status`...) work. Writing and other commands unlock only after you approve the agent's plan. A new message of yours locks it again |
+| Verify step | `verify.py` | the program remembers every file the agent wrote. Before the agent may say "done", each file needs a passing check after its last write: code files (`.py` `.js` `.sh`) must be run or tested with exit code 0, other files must be read back and match. Otherwise the answer is held back and the agent is sent to check. After 2 tries you see a NOT VERIFIED notice written by the program |
 | Action Gate | `action_gate.py` | commands are ALLOW / APPROVAL / BLOCK; secrets are stripped from the command environment |
 | Script gate | `script_gate.py` | scripts the agent runs (`python x.py`, `bash x.sh`, `node x.js`) need your approval; the prompt shows the code; approval is remembered for the session only for that exact content |
 | Web safety | `web_tools.py` | `fetch_url` refuses internal/private addresses, re-checks every redirect |
@@ -53,16 +54,17 @@ The agent can only touch files inside `workspace/`.
 1. You send a request. The agent can look around (read-only) but cannot change anything.
 2. It shows you a plan (goal, steps, files). Answer `yes` to unlock it, `no` to keep it locked, or type what to change and it will revise the plan.
 3. After `yes` it can write files and run commands, still behind the Action Gate and script gate.
-4. Your next message starts at step 1 again.
+4. Before it can say "done", every file it wrote must pass a check (run it, or read it back). If it skips this, its answer is held back and it is sent to check. You see `[VERIFY] Checked...` with what passed, or `[VERIFY] NOT VERIFIED` if nothing did.
+5. Your next message starts at step 1 again.
 
 Questions and explanations need no plan. To skip the plan for one request, start your message with `/do `.
 
 ## Tests
 
-Run all of them before and after every change. `test_ai_agent.py` drives the real tool pipeline (write file, run command, approval gates, audit log, kill switch); `test_task_engine.py` also runs the real chat loop with a scripted fake model with no model and no internet:
+Run all of them before and after every change. `test_ai_agent.py` drives the real tool pipeline (write file, run command, approval gates, audit log, kill switch); `test_task_engine.py` and `test_verify.py` also run the real chat loop with a scripted fake model, with no model and no internet:
 
 ```
-for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout test_ai_agent test_console_input test_task_engine; do python $t.py | grep RESULTS; done
+for t in test_action_gate test_audit_log test_killswitch test_web_tools test_llm_client test_gate_hardening test_script_gate test_ai_source test_repo_layout test_ai_agent test_console_input test_task_engine test_verify; do python $t.py | grep RESULTS; done
 ```
 
 ## Repo layout
