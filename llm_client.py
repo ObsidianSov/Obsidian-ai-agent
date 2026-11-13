@@ -52,6 +52,27 @@ def models_from_env(default, env_var="OBSIDIAN_MODELS"):
     return models if models else list(default)
 
 
+DEFAULT_MAX_TOKENS = 2000
+MIN_MAX_TOKENS = 256
+MAX_MAX_TOKENS = 16000
+
+
+def max_tokens_from_env(default=DEFAULT_MAX_TOKENS, env_var="OBSIDIAN_MAX_TOKENS"):
+    """
+    Reply-length cap sent to the model. Read from the environment so it can be
+    lowered without editing code. A missing, non-numeric or out-of-range value
+    falls back safely (below MIN or above MAX is clamped, junk uses default).
+    """
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(MIN_MAX_TOKENS, min(MAX_MAX_TOKENS, value))
+
+
 def _error_text(data, response_text=""):
     """Pull a short readable error message out of an OpenRouter reply."""
     if isinstance(data, dict):
@@ -176,7 +197,12 @@ def call_model(
     details = "\n  ".join(history) if history else "no details"
 
     if out_of_credits:
-        raise LLMFatalError(f"{CREDITS_HINT}\n  {details}")
+        hint = CREDITS_HINT
+        if "token" in details.lower():
+            hint += (" If the message above mentions tokens, the reply cap is "
+                     "higher than your credits allow: lower OBSIDIAN_MAX_TOKENS "
+                     "(for example 1500).")
+        raise LLMFatalError(f"{hint}\n  {details}")
 
     raise LLMError(f"All models failed:\n  {details}")
 

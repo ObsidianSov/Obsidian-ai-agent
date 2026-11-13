@@ -14,6 +14,7 @@ from llm_client import (
     LLMFatalError,
     build_tool_messages,
     call_model,
+    max_tokens_from_env,
     models_from_env,
     parse_tool_arguments,
 )
@@ -191,6 +192,37 @@ def run_all_tests():
     os.environ["OBSIDIAN_MODELS"] = "  "
     check(models_from_env(["default/m"]) == ["default/m"], "blank env var -> default model list")
     os.environ.pop("OBSIDIAN_MODELS", None)
+
+    # ---------- M10: max_tokens_from_env ----------
+    os.environ.pop("OBSIDIAN_MAX_TOKENS", None)
+    check(max_tokens_from_env() == 2000, "no env var -> default reply cap is 2000 tokens")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = " 1500 "
+    check(max_tokens_from_env() == 1500, "env var value is used (spaces trimmed)")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = "abc"
+    check(max_tokens_from_env() == 2000, "non-numeric env var -> default")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = "  "
+    check(max_tokens_from_env() == 2000, "blank env var -> default")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = "5"
+    check(max_tokens_from_env() == 256, "tiny value is raised to the safe minimum (256)")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = "-50"
+    check(max_tokens_from_env() == 256, "negative value is raised to the safe minimum (256)")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = "999999"
+    check(max_tokens_from_env() == 16000, "huge value is capped at 16000")
+    os.environ["OBSIDIAN_MAX_TOKENS"] = "1.5"
+    check(max_tokens_from_env() == 2000, "decimal value is not a valid whole number -> default")
+    os.environ.pop("OBSIDIAN_MAX_TOKENS", None)
+    check(max_tokens_from_env(default=777) == 777, "custom default is respected when env var is missing")
+
+    # the chosen cap really reaches the model request
+    (data, used), post, sleep = run_call({"A": [FakeResponse(200, GOOD)]}, ["A"], max_tokens=1200)
+    check(post.calls[0][2]["max_tokens"] == 1200, "call_model sends the max_tokens it is given")
+
+    # 402 that mentions tokens gets the lower-the-cap hint; plain 402 does not
+    token_msg = "This request requires more credits, or fewer max_tokens. You requested up to 4096 tokens, but can only afford 1500"
+    err, _, _ = expect_error({"A": [FakeResponse(402, {"error": {"message": token_msg}})]}, ["A"], LLMFatalError)
+    check(isinstance(err, LLMFatalError) and "OBSIDIAN_MAX_TOKENS" in str(err), "402 about tokens tells the user to lower OBSIDIAN_MAX_TOKENS")
+    err, _, _ = expect_error({"A": [FakeResponse(402, {"error": {"message": "no credits"}})]}, ["A"], LLMFatalError)
+    check(isinstance(err, LLMFatalError) and "OBSIDIAN_MAX_TOKENS" not in str(err), "a plain 402 does not mention the token cap")
 
     # ---------- parse_tool_arguments ----------
     check(parse_tool_arguments('{"path": "a.txt"}') == ({"path": "a.txt"}, None), "valid JSON arguments are parsed")

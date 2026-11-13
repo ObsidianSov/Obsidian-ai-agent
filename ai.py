@@ -9,7 +9,7 @@ from memory_system import MemorySystem
 from audit_log import AuditLog
 from web_tools import fetch_url, web_search
 from killswitch import is_killed, killswitch_path
-from llm_client import call_model, models_from_env, build_tool_messages
+from llm_client import call_model, models_from_env, max_tokens_from_env, build_tool_messages
 
 
 # ============================================================
@@ -61,6 +61,10 @@ MODEL = "minimax/minimax-m2.7"
 # Fallback chain: first model is tried first. To add fallbacks, set the
 # environment variable OBSIDIAN_MODELS to a comma-separated list.
 MODELS = models_from_env([MODEL])
+
+# Reply-length cap per model call. Lower it (e.g. export OBSIDIAN_MAX_TOKENS=1500)
+# if OpenRouter says you cannot afford that many tokens.
+MAX_TOKENS = max_tokens_from_env()
 
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = BASE_DIR / "workspace"
@@ -680,6 +684,7 @@ def ask_model(messages):
         api_key=API_KEY,
         url=URL,
         models=MODELS,
+        max_tokens=MAX_TOKENS,
     )
 
     if model_used != MODELS[0]:

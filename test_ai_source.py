@@ -52,6 +52,10 @@ def run_all_tests():
     check("read_message(" in src and "ask_human(" in src, "ai.py reads messages with read_message and asks approvals with ask_human")
     check("The model returned an empty reply" in src, "an empty model reply is reported, not printed as 'None'")
 
+    # --- M10: reply-length cap is wired in ---
+    check("MAX_TOKENS = max_tokens_from_env()" in src, "ai.py reads the reply cap with max_tokens_from_env()")
+    check("max_tokens=MAX_TOKENS" in src, "ask_model passes the reply cap to call_model")
+
     passed, total = sum(results), len(results)
     print()
     print(f"RESULTS: {passed}/{total} tests passed")
